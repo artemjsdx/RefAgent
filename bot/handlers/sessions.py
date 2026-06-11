@@ -2,19 +2,21 @@
 sessions.py — Обработчики для управления Telegram-сессиями в боте.
 
 Поддерживает:
-  - Приём .zip и .session файлов от пользователя
+  - Приём .zip архивов (безопасная распаковка, Zip Slip защита)
+  - Приём .session файлов через FSM: бот запрашивает api_id и api_hash
   - Прогресс загрузки через аниматор
   - Список аккаунтов с пагинацией
   - Детальный просмотр и управление аккаунтом
   - Назначение проводника (один на всю систему)
 """
 
-import os
-import tempfile
+import json
 from pathlib import Path
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, Document
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from bot.keyboards.main_menu import CB_SESSIONS, back_to_main_keyboard
 from bot.keyboards.session_menu import (
@@ -43,6 +45,15 @@ def set_animator(a: Animator) -> None:
 
 
 # ════════════════════════════════════════════════════
+# FSM СОСТОЯНИЯ для загрузки одиночного .session файла
+# ════════════════════════════════════════════════════
+
+class SessionUpload(StatesGroup):
+    waiting_api_id   = State()
+    waiting_api_hash = State()
+
+
+# ════════════════════════════════════════════════════
 # ГЛАВНОЕ МЕНЮ СЕССИЙ
 # ════════════════════════════════════════════════════
 
@@ -63,38 +74,33 @@ async def cb_sessions_main(query: CallbackQuery) -> None:
     await query.answer()
 
 
-@router.callback_query(F.data == CB_SESS_BACK)
-async def cb_sessions_back(query: CallbackQuery) -> None:
-    await cb_sessions_main(query)
-
-
 # ════════════════════════════════════════════════════
-# СПИСОК АККАУНТОВ
+# СПИСОК АККАУНТОВ (пагинация)
 # ════════════════════════════════════════════════════
 
 @router.callback_query(F.data.startswith("sess:list:"))
 async def cb_accounts_list(query: CallbackQuery) -> None:
     page     = int(query.data.split(":")[-1])
     accounts = await get_all_accounts()
-    total    = len(accounts)
 
-    if total == 0:
+    if not accounts:
         await query.message.edit_text(
-            "<b>Нет загруженных аккаунтов</b>\n\nОтправь .zip или .session файл сюда в чат.",
-            parse_mode   = "HTML",
-            reply_markup = back_to_main_keyboard(),
+            "Аккаунты не загружены.\n\nОтправь .zip архив или .session файл.",
+            reply_markup=back_to_main_keyboard(),
         )
         await query.answer()
         return
 
-    start    = page * ACCOUNTS_PER_PAGE
-    page_acc = accounts[start : start + ACCOUNTS_PER_PAGE]
-    text     = f"<b>Аккаунты</b> — страница {page + 1}, всего {total}"
+    total_pages = max(1, (len(accounts) + ACCOUNTS_PER_PAGE - 1) // ACCOUNTS_PER_PAGE)
+    page        = max(0, min(page, total_pages - 1))
+    start       = page * ACCOUNTS_PER_PAGE
+    page_items  = accounts[start : start + ACCOUNTS_PER_PAGE]
 
+    text = f"<b>Аккаунты</b>  ({len(accounts)} всего, стр. {page + 1}/{total_pages})"
     await query.message.edit_text(
         text,
         parse_mode   = "HTML",
-        reply_markup = accounts_page_keyboard(page_acc, page, total),
+        reply_markup = accounts_page_keyboard(page_items, page, total_pages),
     )
     await query.answer()
 
@@ -200,17 +206,18 @@ async def cb_delete_execute(query: CallbackQuery) -> None:
 
 
 # ════════════════════════════════════════════════════
-# ЗАГРУЗКА ФАЙЛОВ (приём документов от пользователя)
+# ЗАГРУЗКА ФАЙЛОВ — подсказка
 # ════════════════════════════════════════════════════
 
 @router.callback_query(F.data == CB_SESS_UPLOAD)
 async def cb_upload_prompt(query: CallbackQuery) -> None:
     await query.message.edit_text(
         "<b>Загрузка сессий</b>\n\n"
-        "Отправь мне файл:\n"
-        "— <b>.zip</b> архив с парами <code>.session + .json</code>\n"
-        "— <b>.session</b> файл (рядом должен быть <code>.json</code> с api_id/api_hash)\n\n"
-        "<b>Важно:</b> каждый аккаунт должен иметь свой уникальный api_id в .json файле.\n"
+        "Отправь мне файл:\n\n"
+        "📦 <b>.zip архив</b> — может содержать несколько пар <code>.session + .json</code>\n"
+        "   (каждый .json должен иметь поля <code>app_id</code> и <code>app_hash</code>)\n\n"
+        "📄 <b>.session файл</b> — бот запросит <code>api_id</code> и <code>api_hash</code> интерактивно\n\n"
+        "<b>⚠️ Важно:</b> каждый аккаунт обязан иметь <b>уникальный</b> api_id.\n"
         "Один api_id на несколько аккаунтов = массовая заморозка.",
         parse_mode   = "HTML",
         reply_markup = back_to_main_keyboard(),
@@ -218,21 +225,29 @@ async def cb_upload_prompt(query: CallbackQuery) -> None:
     await query.answer()
 
 
+# ════════════════════════════════════════════════════
+# ПРИЁМ ДОКУМЕНТОВ (.zip и .session)
+# ════════════════════════════════════════════════════
+
 @router.message(F.document)
-async def handle_document(message: Message, bot: Bot) -> None:
+async def handle_document(message: Message, state: FSMContext, bot: Bot) -> None:
     """Обработать входящий документ: .zip или .session файл."""
     doc: Document = message.document
     fname = doc.file_name or ""
 
     if not (fname.endswith(".zip") or fname.endswith(".session")):
         await message.reply(
-            "Поддерживаются только файлы <b>.zip</b> и <b>.session</b>.\n"
-            "Отправь .zip архив или отдельный .session файл с .json рядом.",
+            "Поддерживаются только файлы <b>.zip</b> и <b>.session</b>.\n\n"
+            "Для загрузки нескольких сессий: отправь <b>.zip</b> архив.\n"
+            "Для одной сессии: отправь <b>.session</b> файл — бот запросит данные.",
             parse_mode="HTML",
         )
         return
 
-    # Анимация загрузки
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = SESSIONS_DIR / fname
+
+    # ── Скачать файл ──────────────────────────────────────
     anim    = _animator
     msg_id  = None
     chat_id = message.chat.id
@@ -240,24 +255,125 @@ async def handle_document(message: Message, bot: Bot) -> None:
     if anim:
         msg_id = await anim.start(chat_id, "saving")
 
-    # Скачать файл
-    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    dest = SESSIONS_DIR / fname
     await bot.download(doc, destination=str(dest))
 
-    # Обработать
+    # ── ZIP: обработать сразу ─────────────────────────────
     if fname.endswith(".zip"):
         results = await extract_and_load_zip(dest)
-    else:
-        results = [await load_session_file(dest)]
+        report  = format_load_report(results)
+        if anim and msg_id:
+            await anim.finalize(chat_id, msg_id, report)
+        else:
+            await message.answer(report, parse_mode="HTML")
+        return
 
-    report = format_load_report(results)
+    # ── .session: проверить sidecar JSON ─────────────────
+    # Если рядом нет .json — запустить FSM для ручного ввода
+    sidecar_path = dest.with_suffix(".json")
+    if sidecar_path.exists():
+        # Sidecar уже есть — грузим напрямую
+        results = [await load_session_file(dest)]
+        report  = format_load_report(results)
+        if anim and msg_id:
+            await anim.finalize(chat_id, msg_id, report)
+        else:
+            await message.answer(report, parse_mode="HTML")
+        return
+
+    # Sidecar не найден — начинаем FSM
+    if anim and msg_id:
+        await anim.finalize(chat_id, msg_id, f"📄 Файл <code>{fname}</code> получен.")
+
+    await state.set_state(SessionUpload.waiting_api_id)
+    await state.update_data(session_path=str(dest))
+
+    await message.answer(
+        f"Файл <code>{fname}</code> сохранён.\n\n"
+        "Введи <b>api_id</b> для этого аккаунта (целое число).\n"
+        "<i>Получить можно на my.telegram.org → App configuration → App api_id</i>",
+        parse_mode="HTML",
+    )
+
+
+# ════════════════════════════════════════════════════
+# FSM ШАГ 1: ввод api_id
+# ════════════════════════════════════════════════════
+
+@router.message(SessionUpload.waiting_api_id)
+async def fsm_receive_api_id(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+
+    try:
+        api_id = int(text)
+        if api_id <= 0:
+            raise ValueError
+    except ValueError:
+        await message.reply(
+            "❌ api_id должен быть положительным целым числом.\n"
+            "Пример: <code>12345678</code>\n\nПопробуй ещё раз:",
+            parse_mode="HTML",
+        )
+        return
+
+    await state.update_data(api_id=api_id)
+    await state.set_state(SessionUpload.waiting_api_hash)
+    await message.answer(
+        f"api_id <code>{api_id}</code> принят.\n\n"
+        "Теперь введи <b>api_hash</b> (строка из 32 символов).\n"
+        "<i>Там же: my.telegram.org → App configuration → App api_hash</i>",
+        parse_mode="HTML",
+    )
+
+
+# ════════════════════════════════════════════════════
+# FSM ШАГ 2: ввод api_hash → создание sidecar + загрузка
+# ════════════════════════════════════════════════════
+
+@router.message(SessionUpload.waiting_api_hash)
+async def fsm_receive_api_hash(message: Message, state: FSMContext) -> None:
+    api_hash = (message.text or "").strip()
+
+    if not api_hash or len(api_hash) < 8:
+        await message.reply(
+            "❌ api_hash слишком короткий. Обычно это строка из 32 символов.\n"
+            "Пример: <code>a1b2c3d4e5f6...</code>\n\nПопробуй ещё раз:",
+            parse_mode="HTML",
+        )
+        return
+
+    data         = await state.get_data()
+    api_id       = data["api_id"]
+    session_path = Path(data["session_path"])
+
+    # Создать sidecar JSON
+    sidecar = session_path.with_suffix(".json")
+    sidecar.write_text(
+        json.dumps({"app_id": api_id, "app_hash": api_hash}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    await state.clear()
+
+    # Загрузить сессию
+    anim    = _animator
+    msg_id  = None
+    chat_id = message.chat.id
+
+    if anim:
+        msg_id = await anim.start(chat_id, "saving")
+
+    results = [await load_session_file(session_path)]
+    report  = format_load_report(results)
 
     if anim and msg_id:
         await anim.finalize(chat_id, msg_id, report)
     else:
         await message.answer(report, parse_mode="HTML")
 
+
+# ════════════════════════════════════════════════════
+# ВСПОМОГАТЕЛЬНЫЕ
+# ════════════════════════════════════════════════════
 
 @router.callback_query(F.data == "sess:noop")
 async def cb_noop(query: CallbackQuery) -> None:

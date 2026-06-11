@@ -239,7 +239,18 @@ async def extract_and_load_zip(zip_path: Path) -> list[SessionLoadResult]:
 
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
+            safe_root = extract_dir.resolve()
+            for member in zf.infolist():
+                member_path = Path(member.filename)
+                # Блокируем абсолютные пути и Zip Slip (path traversal)
+                if member_path.is_absolute():
+                    continue
+                resolved = (extract_dir / member_path).resolve()
+                try:
+                    resolved.relative_to(safe_root)
+                except ValueError:
+                    continue  # путь выходит за пределы extract_dir — пропускаем
+                zf.extract(member, extract_dir)
     except zipfile.BadZipFile:
         return [SessionLoadResult(zip_path.name, ok=False, error="Файл повреждён или не является ZIP")]
 
