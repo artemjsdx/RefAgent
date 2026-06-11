@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+.eggs/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.env/
+
+# Environment / secrets
+.env
+config.json
+*.local
+
+# Telegram sessions (never commit these)
+data/sessions/
+data/*.db
+*.session
+*.session-journal
+
+# Temp scripts written by agent
+scripts/tmp_*.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Replit
+.replit
+replit.nix
+.local/
+.cache/
+.upm/
