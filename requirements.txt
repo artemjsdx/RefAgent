@@ -1,15 +1,6 @@
-# ════════ TELEGRAM BOT UI ════════
 aiogram==3.7.0
-
-# ════════ TELEGRAM ACCOUNT CONTROL ════════
 telethon==1.36.0
-
-# ════════ HTTP / ASYNC ════════
 aiohttp==3.9.5
 aiofiles==23.2.1
-
-# ════════ DATABASE ════════
 aiosqlite==0.20.0
-
-# ════════ UTILITIES ════════
 python-dotenv==1.0.1
