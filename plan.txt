@@ -1,0 +1,410 @@
+================================================================================
+  RefAgent — MASTER PLAN
+  Autonomous Telegram Referral Agent
+  Версия: 1.0 | Дата: 2026-06-11
+================================================================================
+
+ОПИСАНИЕ ПРОЕКТА
+────────────────────────────────────────────────────────────────────────────────
+RefAgent — это автономный ИИ-агент, работающий через Telegram-бота.
+Пользователь общается с агентом в чате, передаёт реферальную ссылку и условия
+зачисления. Агент самостоятельно управляет пулом Telegram-аккаунтов
+(через Telethon), выполняет цепочку действий (вступить в канал, запустить бота,
+нажать кнопки), учится на ошибках через библиотеку знаний.
+
+Среда разработки: Replit → деплой: Termux (Android)
+Язык: Python 3.11+
+
+================================================================================
+БЛОК 1: СТРУКТУРА ПРОЕКТА
+================================================================================
+
+RefAgent/
+├── main.py                         # Точка входа, запуск бота
+├── requirements.txt                # Зависимости
+├── config/
+│   ├── settings.py                 # Загрузка конфига из env + config.json
+│   └── constants.py                # Константы (таймауты, лимиты, пути)
+│
+├── bot/                            # ═══ TELEGRAM BOT UI ═══
+│   ├── handlers/
+│   │   ├── start.py                # /start — приветствие, онбординг
+│   │   ├── chat.py                 # Основной чат с агентом
+│   │   ├── sessions.py             # Загрузка .zip/.session файлов
+│   │   ├── settings_menu.py        # Настройки (LLM провайдер, модель)
+│   │   └── stats.py                # Статистика задач
+│   ├── keyboards/
+│   │   ├── main_menu.py            # Главное меню
+│   │   ├── model_browser.py        # Пагинированный выбор модели (300+)
+│   │   ├── session_menu.py         # Управление сессиями
+│   │   └── task_controls.py        # Кнопки: Стоп / Стоп + написать
+│   └── ui/
+│       ├── animator.py             # Анимация: Working. Working.. Working...
+│       ├── status_blocks.py        # Постоянные лог-блоки между действиями
+│       └── report.py               # Форматирование финального отчёта
+│
+├── agent/                          # ═══ AI AGENT CORE ═══
+│   ├── react_loop.py               # ReAct цикл: Think → Act → Observe
+│   ├── plan_manager.py             # Создание / изменение / удаление плана
+│   ├── system_prompt.py            # Сборка системного промпта (план + правила)
+│   ├── tools_registry.py           # Регистрация всех инструментов
+│   └── context_manager.py          # Управление контекстом (особенно FavoriteAPI)
+│
+├── providers/                      # ═══ LLM PROVIDERS ═══
+│   ├── base.py                     # Абстрактный класс провайдера
+│   ├── openrouter.py               # OpenRouter (300+ моделей)
+│   └── favoriteapi.py              # FavoriteAPI (Gemini bridge, теги памяти)
+│
+├── tools/                          # ═══ AGENT TOOLS ═══
+│   ├── session_tools.py            # Управление сессиями, check UID
+│   ├── tg_tools.py                 # join_channel, send_message, click_button
+│   ├── conductor_tools.py          # Harold-проводник: create_group, invite
+│   ├── warmup_tools.py             # Программный прогрев аккаунтов
+│   ├── terminal_tools.py           # Выполнение shell-команд, временные скрипты
+│   └── library_tools.py            # Поиск/запись знаний об ошибках
+│
+├── data/
+│   ├── sessions/                   # .session файлы аккаунтов
+│   ├── library/                    # База знаний ошибок (markdown файлы)
+│   │   ├── peer_id_invalid.md
+│   │   ├── invite_hash_expired.md
+│   │   ├── channel_invalid.md
+│   │   ├── random_id_empty.md
+│   │   ├── uid_too_high.md
+│   │   └── session_formats.md
+│   ├── sessions.db                 # SQLite: аккаунты, UID, статус
+│   └── results.db                  # SQLite: история задач и результатов
+│
+└── scripts/                        # Временные скрипты агента (auto-cleaned)
+
+================================================================================
+БЛОК 2: КРИТИЧЕСКИЕ ПРАВИЛА (ВСЕГДА В СИСТЕМНОМ ПРОМПТЕ АГЕНТА)
+================================================================================
+
+⚠️  ПРАВИЛО №1 — API_ID / API_HASH
+────────────────────────────────────
+НИКОГДА не использовать один API_ID/API_HASH для нескольких аккаунтов.
+Каждый .session файл должен подключаться со своим собственным API_ID и
+API_HASH из sidecar .json файла рядом с сессией.
+Если .json не найден → использовать значение из sessions.db для данного акка.
+Если и там нет → пропустить аккаунт, не пытаться угадать.
+Нарушение = массовая заморозка аккаунтов. Это необратимо.
+
+⚠️  ПРАВИЛО №2 — ТАЙМИНГИ
+─────────────────────────
+- 60 сек между зачислениями рефов у одного реферера (жёсткий лимит)
+- 15-30 сек между обработкой аккаунтов
+- 5 сек после /start и /verify перед чтением ответа
+- 10 сек максимальное ожидание ответа бота (5 попыток)
+
+⚠️  ПРАВИЛО №3 — UID ФИЛЬТРАЦИЯ
+───────────────────────────────
+При загрузке сессий ПЕРВЫМ делом проверять UID.
+Помечать аккаунты по категориям:
+  - FRESH (UID > 8_500_000_000): ограниченные возможности
+  - NORMAL (7_000_000_000 - 8_500_000_000): стандартные
+  - OLD (< 7_000_000_000): максимальные права
+  - CONDUCTOR: прогретый аккаунт, способный создавать группы
+
+⚠️  ПРАВИЛО №4 — ПРОВОДНИК ОБЯЗАТЕЛЕН
+───────────────────────────────────────
+В тестах 0% аккаунтов смогли написать боту напрямую в DM.
+Всегда использовать схему Harold-проводника:
+  Проводник создаёт группу с ботом → фреш заходит по инвайту → общение в группе
+
+⚠️  ПРАВИЛО №5 — БИБЛИОТЕКА ЗНАНИЙ
+────────────────────────────────────
+При любой ошибке СНАЧАЛА искать в /data/library/.
+Если решение найдено → применять. Если нет → искать самому.
+Если нашёл новое решение → записать в библиотеку.
+
+⚠️  ПРАВИЛО №6 — ПЛАН ПЕРЕД РАБОТОЙ
+─────────────────────────────────────
+Никогда не начинать выполнение задачи без утверждённого плана.
+Агент может обсуждать с пользователем, уточнять условия — но кнопка
+"Запустить" недоступна пока план не создан и не показан пользователю.
+Во время работы агент МОЖЕТ изменять план, уведомляя пользователя.
+
+================================================================================
+БЛОК 3: ЭТАПЫ РАЗРАБОТКИ
+================================================================================
+
+ЭТАП 1: Инфраструктура и запуск бота
+──────────────────────────────────────
+[ ] 1.1 requirements.txt (aiogram 3, telethon, aiohttp, aiosqlite)
+[ ] 1.2 config/settings.py — загрузка из .env / secrets
+[ ] 1.3 config/constants.py — все магические числа в одном месте
+[ ] 1.4 main.py — запуск aiogram
+[ ] 1.5 bot/handlers/start.py — приветственное сообщение + онбординг
+[ ] 1.6 bot/keyboards/main_menu.py — главное меню
+[ ] 1.7 bot/ui/animator.py — Working. Working.. Working...
+
+ЭТАП 2: LLM Провайдеры
+────────────────────────
+[ ] 2.1 providers/base.py — абстракция (chat, get_models, reset)
+[ ] 2.2 providers/openrouter.py — API вызов + получение списка моделей
+[ ] 2.3 providers/favoriteapi.py — вызов + теги памяти + context_kb + reset
+[ ] 2.4 bot/keyboards/model_browser.py — пагинация 300+ моделей
+      - Фильтр: Free / Paid
+      - Сортировка: цена, контекст
+      - Поиск по названию
+      - Страница: 10 моделей = 10 кнопок + Next/Prev
+[ ] 2.5 Тест обоих провайдеров
+
+ЭТАП 3: Управление сессиями
+────────────────────────────
+[ ] 3.1 data/sessions.db — схема: id, phone, uid, api_id, api_hash,
+                            format, status, is_conductor, warmup_score
+[ ] 3.2 tools/session_tools.py:
+      - load_sessions(zip_or_session_path) → распаковка, определение формата
+      - check_uid(session) → подключение, получение UID, сохранение
+      - detect_format(path) → TELETHON / TDESKTOP / PYROGRAM
+      - read_sidecar_json(path) → app_id, app_hash
+      - assign_conductor(session_id) → пометить как проводника
+[ ] 3.3 bot/handlers/sessions.py — загрузка через бот (файл → распаковка → проверка)
+[ ] 3.4 bot/keyboards/session_menu.py — список сессий, статусы
+
+ЭТАП 4: Agent Core
+────────────────────
+[ ] 4.1 agent/tools_registry.py — регистрация всех инструментов с описаниями
+[ ] 4.2 agent/plan_manager.py:
+      - create_plan(conditions) → структурированный план
+      - update_plan(changes) → изменение на ходу
+      - delete_plan() → сброс
+      - get_plan_as_prompt() → строка для системного промпта
+[ ] 4.3 agent/system_prompt.py — сборка промпта:
+      = BASE_RULES (правила 1-6) + PLAN + TOOLS_LIST + CONTEXT
+[ ] 4.4 agent/react_loop.py:
+      - Основной цикл: LLM вызов → parse tool_calls → execute → observe → loop
+      - Остановка по сигналу (asyncio.Event)
+      - Стриминг статусов в Telegram через ui/animator.py
+[ ] 4.5 agent/context_manager.py — для FavoriteAPI:
+      - Следить за context_kb
+      - При >150KB → write:ctx тег → сжатие
+      - При CTX_LIMIT → reset → load:mem
+
+ЭТАП 5: Telegram инструменты
+──────────────────────────────
+[ ] 5.1 tools/tg_tools.py:
+      - connect_account(session, api_id, api_hash) → TelegramClient
+      - join_channel(client, username_or_link) → bool
+      - start_bot(client, bot_username, payload) → str (response)
+      - send_message(client, peer, text) → message
+      - get_messages(client, peer, limit) → [messages]
+      - click_button(client, peer, msg_id, button_data) → response
+      - check_membership(client, username) → bool
+      - wait_bot_response(client, peer, timeout) → message | None
+[ ] 5.2 tools/conductor_tools.py:
+      - create_group_with_bot(conductor_client, bot_id, bot_hash) → chat_id
+      - export_invite(conductor_client, chat_id) → hash
+      - join_by_invite(fresh_client, hash) → bool
+      - cleanup_group(conductor_client, chat_id) → void
+[ ] 5.3 tools/warmup_tools.py:
+      - warmup_account(session) → warmup_score
+        (join 3-5 public groups, send messages, set avatar, enable 2FA hints)
+[ ] 5.4 tools/terminal_tools.py:
+      - execute_command(cmd, timeout) → stdout, stderr
+      - write_temp_script(code, filename) → path
+      - run_temp_script(path) → output
+      - cleanup_scripts() → void
+
+ЭТАП 6: Библиотека знаний
+──────────────────────────
+[ ] 6.1 tools/library_tools.py:
+      - search_library(error_type, context) → str | None
+      - write_library(error_type, symptom, cause, solution, code) → path
+      - list_library() → [filenames]
+[ ] 6.2 Предзаполнить из sovet.txt:
+      - peer_id_invalid.md
+      - invite_hash_expired.md
+      - channel_invalid.md
+      - random_id_empty.md
+      - uid_too_high.md
+      - session_formats.md
+      - regex_invite_hash.md
+      - bot_group_detection.md
+
+ЭТАП 7: UI — Чат с агентом
+───────────────────────────
+[ ] 7.1 bot/handlers/chat.py:
+      - Свободный диалог
+      - Агент сам решает когда предложить создать план
+      - Показ плана пользователю перед запуском
+      - Кнопки: [Запустить] [Изменить план] [Отмена]
+[ ] 7.2 bot/ui/status_blocks.py:
+      - send_status(chat_id, action) → message_id (анимированный)
+      - update_status(message_id, action) → цикл Working.../Read...
+      - finalize_log(chat_id, message_id, text) → удалить статус, отправить лог
+[ ] 7.3 bot/keyboards/task_controls.py:
+      - Кнопка "Остановить" (во время работы агента)
+      - Кнопка "Стоп + написать" (стоп + открыть поле ввода)
+[ ] 7.4 bot/ui/report.py — финальный отчёт в рамке
+
+ЭТАП 8: Настройки
+──────────────────
+[ ] 8.1 bot/handlers/settings_menu.py:
+      - Выбор провайдера (OpenRouter / FavoriteAPI)
+      - Выбор модели (пагинированное меню)
+      - Назначить/сменить проводника
+      - Тест подключения LLM
+      - Путь к сессиям
+[ ] 8.2 Все настройки хранятся в config.json (не в коде)
+
+================================================================================
+БЛОК 4: ДЕТАЛИ РЕАЛИЗАЦИИ
+================================================================================
+
+ПРОВОДНИК (Harold Pattern)
+──────────────────────────
+1. При загрузке сессий → автоматически тестировать:
+   can_resolve_username() + can_create_group()
+2. Лучший кандидат (старейший по UID, прошедший тест) = conductor
+3. Кэш групп: {fresh_phone: {chat_id, bot_username, created_at}}
+4. Cleanup: удалять группы после завершения задачи (экономия ресурсов)
+5. Если conductor недоступен → агент уведомляет пользователя, не начинает работу
+
+ОПРЕДЕЛЕНИЕ ТИПА БОТА
+──────────────────────
+1. Агент отправляет /help или /start в группу через conductor + fresh
+2. Ждёт 7 сек
+3. Если ответ есть → кэшировать: bot_@username = ACCEPTS_GROUPS
+4. Если нет → DIRECT_DM_ONLY → уведомить пользователя об ограничении
+5. Результат сохраняется в library/bot_@username.md
+
+INLINE КНОПКИ
+─────────────
+- Всегда проверять reply_markup в ответе бота
+- KeyboardButtonCallback → GetBotCallbackAnswerRequest
+- URL-кнопки → логировать URL, не кликать автоматически
+- ReplyKeyboard → SendMessageRequest с текстом кнопки
+
+ОЖИДАНИЕ ОТВЕТА БОТА
+─────────────────────
+- Метод: send → asyncio.sleep(5) → iter_messages(limit=10)
+- Максимум 5 попыток с интервалом 2 сек
+- Если нет ответа за 10 сек → timeout error → в библиотеку знаний
+
+PAGINATED MODEL BROWSER
+───────────────────────
+- GET https://openrouter.ai/api/v1/models → кэш на 1 час
+- Разбить на страницы по 10
+- Фильтры: Free (pricing.prompt == "0") / Paid
+- Кнопки навигации: [◀ Назад] [1/30] [Вперёд ▶]
+- Кнопка ввода вручную всегда доступна
+
+FAVORITEAPI CONTEXT MANAGEMENT
+────────────────────────────────
+- При каждом ответе читать context_kb
+- При >150/180KB → автоматически сжимать через write:ctx тег
+- При CTX_LIMIT_180 → reset → restore → load:mem
+- Все теги ([⊕...⊕]) скрыты от пользователя
+
+TERMINAL TOOL
+─────────────
+- Агент может писать временные Python-скрипты в /scripts/
+- Имя файла: tmp_{timestamp}_{description}.py
+- Автоочистка скриптов старше 24 часов
+- Таймаут выполнения: 60 сек по умолчанию, настраиваемо
+
+================================================================================
+БЛОК 5: СИСТЕМНЫЙ ПРОМПТ АГЕНТА (ЯДРО)
+================================================================================
+
+Системный промпт агента всегда содержит:
+
+[IDENTITY]
+  Ты RefAgent — автономный ИИ-агент для работы с реферальными программами
+  в Telegram. У тебя есть доступ к инструментам управления аккаунтами,
+  Telegram API и терминалу. Ты умеешь писать временные скрипты для решения
+  нестандартных задач.
+
+[CRITICAL RULES]
+  Правила 1-6 из Блока 2 (API_ID, тайминги, UID, проводник, библиотека, план)
+
+[CURRENT PLAN]
+  {plan_content или "Плана нет. Обсуди задачу с пользователем."}
+
+[TOOLS]
+  {список доступных инструментов с описаниями и сигнатурами}
+
+[LIBRARY HINT]
+  При любой ошибке: сначала вызови search_library(error_type).
+  Если решения нет — найди сам, затем вызови write_library().
+
+[RESPONSE STYLE]
+  Отвечай на русском. Технические детали — конкретно.
+  Не объясняй очевидное. Уведомляй о прогрессе кратко.
+
+================================================================================
+БЛОК 6: БАЗА ДАННЫХ
+================================================================================
+
+sessions.db
+───────────
+CREATE TABLE accounts (
+    id INTEGER PRIMARY KEY,
+    phone TEXT UNIQUE,
+    uid INTEGER,
+    api_id INTEGER,          -- СВОЙ для каждого аккаунта!
+    api_hash TEXT,           -- СВОЙ для каждого аккаунта!
+    session_path TEXT,
+    format TEXT,             -- TELETHON / TDESKTOP / PYROGRAM
+    status TEXT,             -- active / frozen / banned / untested
+    is_conductor INTEGER DEFAULT 0,
+    warmup_score INTEGER DEFAULT 0,
+    uid_category TEXT,       -- OLD / NORMAL / FRESH
+    notes TEXT,
+    added_at TIMESTAMP,
+    last_used TIMESTAMP
+);
+
+results.db
+──────────
+CREATE TABLE tasks (
+    id INTEGER PRIMARY KEY,
+    ref_url TEXT,
+    ref_code TEXT,
+    conditions TEXT,
+    plan TEXT,
+    started_at TIMESTAMP,
+    finished_at TIMESTAMP,
+    total_accounts INTEGER,
+    success_count INTEGER,
+    fail_count INTEGER,
+    status TEXT              -- running / completed / stopped / error
+);
+
+CREATE TABLE task_results (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER,
+    account_id INTEGER,
+    status TEXT,             -- success / failed / skipped
+    fail_reason TEXT,
+    timestamp TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES tasks(id),
+    FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+
+================================================================================
+БЛОК 7: ПЕРЕНОС НА TERMUX
+================================================================================
+
+[ ] Все пути через os.path / pathlib (не хардкодить)
+[ ] BASE_DIR = env var или автодетект (Path(__file__).parent)
+[ ] На Termux: BASE_DIR = /storage/emulated/0/Цхранилище/Project/RefAgent/
+[ ] На Replit: BASE_DIR = /home/runner/workspace/RefAgent/
+[ ] Никаких systemd/supervisor — запуск через простой python main.py
+[ ] requirements.txt полный, с версиями
+[ ] README.md с инструкцией по деплою на Termux
+
+================================================================================
+БЛОК 8: ОСТАЁТСЯ УТОЧНИТЬ
+================================================================================
+
+[ ] TELEGRAM_BOT_TOKEN — нужен токен от @BotFather для RefAgent-бота
+[ ] FAVORITEAPI_URL — URL Cloudflare tunnel или локальный endpoint
+    (в документации: "no public domain yet, run locally or via tunnel")
+
+================================================================================
+  КОНЕЦ ПЛАНА
+================================================================================
