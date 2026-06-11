@@ -18,7 +18,7 @@ from aiogram.fsm.state import State, StatesGroup
 from bot.keyboards.main_menu import (
     settings_keyboard, provider_select_keyboard,
     CB_SETTINGS, CB_SETTINGS_PROVIDER, CB_SETTINGS_MODEL, CB_SETTINGS_TEST,
-    CB_SETTINGS_BACK, CB_PROVIDER_OR, CB_PROVIDER_FA,
+    CB_SETTINGS_BACK, CB_PROVIDER_OR, CB_PROVIDER_FA, CB_PROVIDER_BAI,
 )
 from bot.keyboards.model_browser import (
     model_filter_keyboard, model_page_keyboard, model_page_text,
@@ -99,18 +99,28 @@ async def cb_provider_menu(query: CallbackQuery) -> None:
     await query.answer()
 
 
-@router.callback_query(F.data.in_({CB_PROVIDER_OR, CB_PROVIDER_FA}))
+@router.callback_query(F.data.in_({CB_PROVIDER_OR, CB_PROVIDER_FA, CB_PROVIDER_BAI}))
 async def cb_select_provider(query: CallbackQuery) -> None:
     if await _agent_active_notice(query):
         return
-    settings  = get_settings()
-    chosen    = "openrouter" if query.data == CB_PROVIDER_OR else "favoriteapi"
+    settings = get_settings()
+    chosen   = {
+        CB_PROVIDER_OR:  "openrouter",
+        CB_PROVIDER_FA:  "favoriteapi",
+        CB_PROVIDER_BAI: "bai",
+    }[query.data]
     settings.bot.active_provider = chosen
     settings.bot.active_model    = None   # reset model when switching provider
     save_bot_config(settings.bot)
 
+    provider_labels = {
+        "openrouter":  "OpenRouter",
+        "favoriteapi": "FavoriteAPI",
+        "bai":         "b.ai (бесплатно 500K токенов, Kimi K2.5 / GLM-5)",
+    }
     await query.message.edit_text(
-        f"<b>Провайдер изменён:</b> <code>{chosen}</code>\n\nМодель сброшена на умолчание.",
+        f"<b>Провайдер изменён:</b>\n{provider_labels.get(chosen, chosen)}\n\n"
+        f"Модель сброшена на умолчание.",
         parse_mode   = "HTML",
         reply_markup = provider_select_keyboard(chosen),
     )
@@ -126,9 +136,12 @@ async def cb_model_menu(query: CallbackQuery) -> None:
     if await _agent_active_notice(query):
         return
     settings = get_settings()
-    if settings.bot.active_provider != "openrouter":
+    if settings.bot.active_provider not in ("openrouter",):
         models = await _get_models(settings)
-        text   = "<b>Модели FavoriteAPI</b>\n\nВыбери модель:"
+        provider_label = {"favoriteapi": "FavoriteAPI", "bai": "b.ai"}.get(
+            settings.bot.active_provider, settings.bot.active_provider
+        )
+        text   = f"<b>Модели {provider_label}</b>\n\nВыбери модель:"
         rows   = [
             [InlineKeyboardButton(
                 text          = f"{'* ' if m.id == settings.bot.active_model else ''}{m.name}",
