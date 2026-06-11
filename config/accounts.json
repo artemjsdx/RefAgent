@@ -1,0 +1,77 @@
+{
+  "conductor": {
+    "phone": "+14707620517",
+    "session": "data/sessions/+14707620517_1781217739417.session",
+    "json": "data/sessions/+14707620517_1781218518101.json",
+    "api_id": 2040,
+    "api_hash": "b18441a1ff607e10a989891a5462e627",
+    "uid": 8978062324,
+    "note": "Harold Conductor — создал тестового бота и канал"
+  },
+  "refagent_accounts": [
+    {
+      "phone": "+14707526421",
+      "session": "data/sessions/+14707526421_1781218518023.session",
+      "json": "data/sessions/+14707526421_1781218517975.json",
+      "api_id": 2040,
+      "api_hash": "b18441a1ff607e10a989891a5462e627",
+      "device": "Q1J1HNJBT6-ELITE"
+    },
+    {
+      "phone": "+14707526481",
+      "session": "data/sessions/+14707526481_1781218518059.session",
+      "json": "data/sessions/+14707526481_1781218518043.json",
+      "api_id": 2040,
+      "api_hash": "b18441a1ff607e10a989891a5462e627",
+      "device": "AIAN-PREMIUM"
+    },
+    {
+      "phone": "+14707526490",
+      "session": "data/sessions/+14707526490_1781218518080.session",
+      "json": "data/sessions/+14707526490_1781218518070.json",
+      "api_id": 2040,
+      "api_hash": "b18441a1ff607e10a989891a5462e627",
+      "device": "DSOD8C-PRO"
+    }
+  ],
+  "test_accounts": [
+    {
+      "phone": "+14707621165",
+      "session": "data/sessions/+14707621165_1781218518134.session",
+      "json": "data/sessions/+14707621165_1781218518123.json",
+      "api_id": 2040,
+      "api_hash": "b18441a1ff607e10a989891a5462e627",
+      "device": "L-PTW-ELITE"
+    },
+    {
+      "phone": "+14707621178",
+      "session": "data/sessions/+14707621178_1781218518155.session",
+      "json": "data/sessions/+14707621178_1781218518145.json",
+      "api_id": 2040,
+      "api_hash": "b18441a1ff607e10a989891a5462e627",
+      "device": "WARVL-EXTREME"
+    },
+    {
+      "phone": "+14707621741",
+      "session": "data/sessions/+14707621741_1781218518175.session",
+      "json": "data/sessions/+14707621741_1781218518165.json",
+      "api_id": 2040,
+      "api_hash": "b18441a1ff607e10a989891a5462e627",
+      "device": "FLDQJT-4SI-EXTREME"
+    },
+    {
+      "phone": "+14707624448",
+      "session": "data/sessions/+14707624448_1781218518196.session",
+      "json": "data/sessions/+14707624448_1781218518186.json",
+      "api_id": 2040,
+      "api_hash": "b18441a1ff607e10a989891a5462e627",
+      "device": "CT_3_8J-EXTREME"
+    }
+  ],
+  "target_bot": {
+    "username": "RefTestRef8483_bot",
+    "token": "8901857239:AAGwuUvNQ2iB9ahew4dQ8Ybr2HHvAZTCKno",
+    "channel_id": -1003703314975,
+    "channel_invite": "https://t.me/+7EGLjx54um42ZGQx"
+  }
+}
