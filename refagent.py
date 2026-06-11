@@ -5,7 +5,7 @@ refagent.py — Точка входа RefAgent.
 
 При старте:
   1. Интерактивный ввод токена бота (Enter = оставить из config.json)
-  2. Инициализация БД (data/sessions.db)
+  2. Инициализация БД (data/sessions.db, data/results.db)
   3. Запуск aiogram бота
   4. Работает до Ctrl+C
 """
@@ -24,6 +24,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config.settings import load_settings, save_bot_config, set_settings
 from config.constants import BOT_NAME, BOT_VERSION
+
 
 # ════════════════════════════════════════════════════
 # ЛОГИРОВАНИЕ
@@ -45,6 +46,18 @@ def prompt_token(existing: str | None) -> str:
     print(f"\n{'=' * 50}")
     print(f"  {BOT_NAME} v{BOT_VERSION}")
     print(f"{'=' * 50}")
+
+    # Не-интерактивный режим (workflow / CI): используем существующий токен или env
+    import os, sys
+    env_token = os.getenv("BOT_TOKEN")
+    if not sys.stdin.isatty():
+        token = existing or env_token
+        if token:
+            masked = token[:8] + "..." + token[-4:]
+            print(f"\n  [non-interactive] Токен из config: {masked}")
+            return token
+        print("\n  ❌ Токен не найден — задай BOT_TOKEN или config.json")
+        sys.exit(1)
 
     if existing:
         masked = existing[:8] + "..." + existing[-4:]
@@ -68,14 +81,18 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     from bot.ui.animator import Animator
     from bot.handlers.start         import router as start_router
     from bot.handlers.settings_menu import router as settings_router
-    from bot.handlers.sessions      import router as sessions_router, set_animator
+    from bot.handlers.sessions      import router as sessions_router, set_animator as set_sessions_animator
+    from bot.handlers.chat          import router as chat_router, set_animator as set_chat_animator
 
     animator = Animator(bot)
-    set_animator(animator)
+    set_sessions_animator(animator)
+    set_chat_animator(animator)
 
-    dp.include_router(start_router)
-    dp.include_router(sessions_router)   # сессии — до start, чтобы CB_SESSIONS не перехватил placeholder
+    # Порядок важен: sessions до start (чтобы CB_SESSIONS не перехватил placeholder)
+    dp.include_router(sessions_router)
+    dp.include_router(chat_router)
     dp.include_router(settings_router)
+    dp.include_router(start_router)
 
 
 # ════════════════════════════════════════════════════
@@ -84,6 +101,7 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
 
 async def main() -> None:
     from tools.db import init_db
+    from bot.ui.report import init_results_db
 
     settings = load_settings()
     token    = prompt_token(settings.bot.bot_token)
@@ -93,8 +111,23 @@ async def main() -> None:
 
     print(f"\n  Провайдер: {settings.bot.active_provider}")
     print(f"  Модель:    {settings.bot.active_model or 'по умолчанию'}")
+
+    # Показать статус API ключей
+    env = settings.env
+    key_status = []
+    if env.openrouter_api_key:
+        key_status.append("OpenRouter ✓")
+    if env.favoriteapi_key:
+        key_status.append("FavoriteAPI ✓")
+    if env.bai_api_key:
+        key_status.append("b.ai ✓")
+    if not key_status:
+        key_status.append("⚠ API ключи не найдены!")
+    print(f"  API ключи: {', '.join(key_status)}")
+
     print(f"\n  Инициализация базы данных...")
     await init_db()
+    await init_results_db()
     print(f"  БД готова. Запускаю бота...\n")
 
     bot = Bot(
