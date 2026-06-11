@@ -46,6 +46,13 @@ FAVORITEAPI_MODELS_PATH = "/api/v1/models"
 FAVORITEAPI_CTX_WARN_KB   = 150   # start compressing above this
 FAVORITEAPI_CTX_LIMIT_KB  = 180   # hard limit
 
+BAI_BASE_URL        = "https://api.b.ai/v1"
+BAI_CHAT_PATH       = "/chat/completions"
+BAI_MODELS_PATH     = "/models"
+BAI_MODELS_CACHE_TTL = 3600
+BAI_FREE_MODELS     = frozenset({"kimi-k2.5", "glm-5", "glm-5.1", "minimax-m2.5"})
+BAI_DEFAULT_MODEL   = "kimi-k2.5"
+
 # ════════════════════════════════════════════════════
 # MODEL BROWSER
 # ════════════════════════════════════════════════════
