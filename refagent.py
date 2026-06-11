@@ -43,34 +43,31 @@ log = logging.getLogger(BOT_NAME)
 # ════════════════════════════════════════════════════
 
 def prompt_token(existing: str | None) -> str:
+    import os
     print(f"\n{'=' * 50}")
     print(f"  {BOT_NAME} v{BOT_VERSION}")
     print(f"{'=' * 50}")
 
-    # Не-интерактивный режим (workflow / CI): используем существующий токен или env
-    import os, sys
+    # Env var перекрывает всё (Replit secrets / CI)
     env_token = os.getenv("BOT_TOKEN")
-    if not sys.stdin.isatty():
-        token = existing or env_token
-        if token:
-            masked = token[:8] + "..." + token[-4:]
-            print(f"\n  [non-interactive] Токен из config: {masked}")
-            return token
-        print("\n  ❌ Токен не найден — задай BOT_TOKEN или config.json")
-        sys.exit(1)
+    if env_token:
+        masked = env_token[:8] + "..." + env_token[-4:]
+        print(f"\n  Токен из env: {masked}")
+        return env_token
 
+    # Уже есть токен в config.json — не спрашиваем, запускаем сразу
     if existing:
         masked = existing[:8] + "..." + existing[-4:]
-        print(f"\n  Текущий токен: {masked}")
-        answer = input("  Новый токен (Enter = оставить текущий): ").strip()
-        return answer if answer else existing
-    else:
-        print("\n  Токен бота не настроен.")
-        while True:
-            answer = input("  Введи токен от @BotFather: ").strip()
-            if answer:
-                return answer
-            print("  Токен не может быть пустым.")
+        print(f"\n  Токен из config: {masked}")
+        return existing
+
+    # Только если совсем нет токена — спрашиваем интерактивно
+    print("\n  Токен бота не настроен.")
+    while True:
+        answer = input("  Введи токен от @BotFather: ").strip()
+        if answer:
+            return answer
+        print("  Токен не может быть пустым.")
 
 
 # ════════════════════════════════════════════════════
