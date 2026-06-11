@@ -1,11 +1,12 @@
 """
 openrouter.py — OpenRouter LLM provider implementation.
 Supports 300+ models via OpenAI-compatible API.
-Model list is fetched from API and cached for 1 hour.
+Auto-fallback to next free model on 429 rate-limit.
 """
 
 import time
 import json
+import logging
 import aiohttp
 from typing import Optional
 
@@ -15,6 +16,17 @@ from config.constants import (
     OPENROUTER_MODELS_PATH, OPENROUTER_MODELS_CACHE_TTL
 )
 
+log = logging.getLogger(__name__)
+
+# Free models tried in order when primary is 429 rate-limited
+OPENROUTER_FREE_FALLBACKS = [
+    "openai/gpt-oss-20b:free",
+    "openai/gpt-oss-120b:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "google/gemma-4-31b-it:free",
+    "meta-llama/llama-3.1-8b-instruct",   # cheap paid fallback ~$0.00002/1K
+]
+
 
 # ════════════════════════════════════════════════════
 # PROVIDER
@@ -23,12 +35,13 @@ from config.constants import (
 class OpenRouterProvider(BaseProvider):
     """
     OpenRouter provider — OpenAI-compatible API with 300+ models.
+    Automatically retries with fallback models on 429 rate-limit.
     Set OPENROUTER_API_KEY in environment to use.
     """
 
     def __init__(self, api_key: str, default_model: Optional[str] = None):
-        self._api_key      = api_key
-        self._default_model = default_model or "deepseek/deepseek-v4-flash"
+        self._api_key       = api_key
+        self._default_model = default_model or "openai/gpt-oss-20b:free"
         self._models_cache: list[ModelInfo] = []
         self._cache_ts: float = 0.0
 
@@ -58,10 +71,12 @@ class OpenRouterProvider(BaseProvider):
             "X-Title":       "RefAgent",
         }
 
-        tried = [payload["model"]]
-        for attempt_model in [payload["model"]] + OPENROUTER_FREE_FALLBACKS:
-            if attempt_model in tried[1:]:
-                continue
+        # Build fallback chain: requested model first, then free fallbacks
+        primary = payload["model"]
+        fallback_chain = [primary] + [m for m in OPENROUTER_FREE_FALLBACKS if m != primary]
+
+        data = {}
+        for attempt_model in fallback_chain:
             payload["model"] = attempt_model
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -72,16 +87,17 @@ class OpenRouterProvider(BaseProvider):
                 ) as resp:
                     data = await resp.json()
 
-            # 429 or provider error → try next model
-            err = data.get("error", {})
-            if resp.status == 429 or (err and err.get("code") == 429):
-                import logging as _log
-                _log.getLogger(__name__).warning(
-                    f"[OpenRouter] {attempt_model} rate-limited, trying fallback..."
-                )
-                tried.append(attempt_model)
+            err = data.get("error", {}) or {}
+            is_rate_limited = (
+                resp.status == 429
+                or err.get("code") == 429
+                or "rate" in str(err.get("message", "")).lower()
+            )
+            if is_rate_limited:
+                log.warning(f"[OpenRouter] {attempt_model} rate-limited → trying next fallback")
                 continue
-            break  # success
+
+            break   # got a usable response
 
         return self._parse_response(data)
 
@@ -104,16 +120,16 @@ class OpenRouterProvider(BaseProvider):
 
         models = []
         for m in data.get("data", []):
-            pricing   = m.get("pricing", {})
-            prompt_p  = _safe_float(pricing.get("prompt", "0"))
-            compl_p   = _safe_float(pricing.get("completion", "0"))
+            pricing  = m.get("pricing", {})
+            prompt_p = _safe_float(pricing.get("prompt", "0"))
+            compl_p  = _safe_float(pricing.get("completion", "0"))
             models.append(ModelInfo(
-                id              = m.get("id", ""),
-                name            = m.get("name", m.get("id", "")),
-                context_length  = m.get("context_length", 0),
-                is_free         = (prompt_p == 0.0 and compl_p == 0.0),
-                price_prompt    = prompt_p,
-                price_completion= compl_p,
+                id               = m.get("id", ""),
+                name             = m.get("name", m.get("id", "")),
+                context_length   = m.get("context_length", 0),
+                is_free          = (prompt_p == 0.0 and compl_p == 0.0),
+                price_prompt     = prompt_p,
+                price_completion = compl_p,
             ))
 
         self._models_cache = sorted(models, key=lambda x: (not x.is_free, x.id))
@@ -154,18 +170,7 @@ class OpenRouterProvider(BaseProvider):
                 arguments = args_dict,
             ))
 
-        return ProviderResponse(text=text, tool_calls=tool_calls, raw=data
-
-# Free models to try in order when primary is rate-limited
-OPENROUTER_FREE_FALLBACKS = [
-    "openai/gpt-oss-20b:free",
-    "openai/gpt-oss-120b:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
-    "google/gemma-4-31b-it:free",
-    "meta-llama/llama-3.1-8b-instruct",   # cheap paid fallback $0.00002/1K
-]
-
-)
+        return ProviderResponse(text=text, tool_calls=tool_calls, raw=data)
 
 
 # ════════════════════════════════════════════════════
