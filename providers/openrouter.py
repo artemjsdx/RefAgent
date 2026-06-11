@@ -58,14 +58,30 @@ class OpenRouterProvider(BaseProvider):
             "X-Title":       "RefAgent",
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                OPENROUTER_BASE_URL + OPENROUTER_CHAT_PATH,
-                headers=headers,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=120),
-            ) as resp:
-                data = await resp.json()
+        tried = [payload["model"]]
+        for attempt_model in [payload["model"]] + OPENROUTER_FREE_FALLBACKS:
+            if attempt_model in tried[1:]:
+                continue
+            payload["model"] = attempt_model
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    OPENROUTER_BASE_URL + OPENROUTER_CHAT_PATH,
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    data = await resp.json()
+
+            # 429 or provider error → try next model
+            err = data.get("error", {})
+            if resp.status == 429 or (err and err.get("code") == 429):
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    f"[OpenRouter] {attempt_model} rate-limited, trying fallback..."
+                )
+                tried.append(attempt_model)
+                continue
+            break  # success
 
         return self._parse_response(data)
 
@@ -138,7 +154,18 @@ class OpenRouterProvider(BaseProvider):
                 arguments = args_dict,
             ))
 
-        return ProviderResponse(text=text, tool_calls=tool_calls, raw=data)
+        return ProviderResponse(text=text, tool_calls=tool_calls, raw=data
+
+# Free models to try in order when primary is rate-limited
+OPENROUTER_FREE_FALLBACKS = [
+    "openai/gpt-oss-20b:free",
+    "openai/gpt-oss-120b:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "google/gemma-4-31b-it:free",
+    "meta-llama/llama-3.1-8b-instruct",   # cheap paid fallback $0.00002/1K
+]
+
+)
 
 
 # ════════════════════════════════════════════════════
