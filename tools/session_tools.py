@@ -22,7 +22,7 @@ from config.constants import (
     UID_THRESHOLD_FRESH,
     UID_THRESHOLD_NORMAL,
 )
-from tools.db import AccountRecord, DuplicateApiIdError, add_account, api_id_exists
+from tools.db import AccountRecord, DuplicateApiIdError, add_account
 
 
 # ════════════════════════════════════════════════════

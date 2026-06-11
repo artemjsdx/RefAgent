@@ -91,16 +91,17 @@ async def cb_accounts_list(query: CallbackQuery) -> None:
         await query.answer()
         return
 
-    total_pages = max(1, (len(accounts) + ACCOUNTS_PER_PAGE - 1) // ACCOUNTS_PER_PAGE)
+    total       = len(accounts)
+    total_pages = max(1, (total + ACCOUNTS_PER_PAGE - 1) // ACCOUNTS_PER_PAGE)
     page        = max(0, min(page, total_pages - 1))
     start       = page * ACCOUNTS_PER_PAGE
     page_items  = accounts[start : start + ACCOUNTS_PER_PAGE]
 
-    text = f"<b>Аккаунты</b>  ({len(accounts)} всего, стр. {page + 1}/{total_pages})"
+    text = f"<b>Аккаунты</b>  ({total} всего, стр. {page + 1}/{total_pages})"
     await query.message.edit_text(
         text,
         parse_mode   = "HTML",
-        reply_markup = accounts_page_keyboard(page_items, page, total_pages),
+        reply_markup = accounts_page_keyboard(page_items, page, total),
     )
     await query.answer()
 
@@ -181,6 +182,9 @@ async def cb_set_status(query: CallbackQuery) -> None:
 async def cb_delete_confirm(query: CallbackQuery) -> None:
     account_id = int(query.data.split(":")[-1])
     acc        = await get_account(account_id)
+    if not acc:
+        await query.answer("Аккаунт не найден", show_alert=True)
+        return
     await query.message.edit_text(
         f"Удалить аккаунт <b>{acc.phone}</b> из базы данных?\n"
         f"<i>Файл сессии на диске не будет удалён.</i>",
