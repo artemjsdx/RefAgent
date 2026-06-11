@@ -25,7 +25,6 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ChatMemberStatus,
 )
 from aiogram.utils.deep_linking import decode_payload
 
@@ -134,9 +133,11 @@ def kb_main() -> InlineKeyboardMarkup:
 async def is_subscribed(bot: Bot, user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
-        return member.status not in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED, "left", "kicked")
+        log.info(f"Subscription check uid={user_id} status={member.status}")
+        return member.status not in ("left", "kicked", "banned")
     except Exception as e:
-        log.warning(f"Subscription check error for {user_id}: {e}")
+        log.error(f"Subscription check FAILED for uid={user_id}: {type(e).__name__}: {e}")
+        # If bot can't check — deny by default (security)
         return False
 
 def ref_link(bot_username: str, user_id: int) -> str:
@@ -260,7 +261,6 @@ async def cmd_stats(msg: Message):
 
 @dp.message(Command("top"))
 async def cmd_top(msg: Message):
-    await cb_top.__wrapped__(None)  # re-use logic below
     rows = db_top()
     if not rows:
         await msg.answer("Пока нет рефералов 🤷")
