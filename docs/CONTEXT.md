@@ -1,156 +1,106 @@
-# RefAgent — Session Context
+# CONTEXT.md — RefAgent Project State
+_Last updated: Session #5 (2026-06-11)_
 
-> **НОВАЯ СЕССИЯ? Сначала прочитай этот файл, потом docs/ARCHITECTURE.md**
->
-> **КТО ОБНОВЛЯЕТ:** Replit coding agent обновляет этот файл в конце каждой сессии разработки.
-> RefAgent (внутренний LLM) этот файл НЕ трогает.
-
----
-
-## Текущее состояние
-
-**Последнее обновление:** 2026-06-11
-**Сессия:** #4 (Этап 3: AI Agent Core — завершён, бот запущен)
-**Этап:** Этапы 1, 2 и 3 завершены
-
-### Что существует сейчас
-
-| Файл | Статус | Примечания |
-|------|--------|-----------|
-| `refagent.py` | Готово | Ввод токена → init_db → init_results_db → aiogram запуск |
-| `config/constants.py` | Готово | BAI_* добавлены, все magic numbers |
-| `config/settings.py` | Готово | BotConfig + EnvConfig (bai_api_key), синглтон |
-| `providers/base.py` | Готово | Абстракция BaseProvider |
-| `providers/openrouter.py` | Готово | Chat + список моделей (кэш 1ч) |
-| `providers/favoriteapi.py` | Готово | Chat + asyncio.Lock + context_kb |
-| `providers/bai.py` | Готово | b.ai OpenAI-compatible, бесплатные модели |
-| `providers/__init__.py` | Готово | build_provider с b.ai поддержкой |
-| `bot/ui/animator.py` | Готово | Animator: 9 наборов фреймов |
-| `bot/ui/status_blocks.py` | Готово | send_log, send_error, build_task_report |
-| `bot/ui/report.py` | Готово | send_final_report, save_task_result, get_stats |
-| `bot/keyboards/main_menu.py` | Готово | CB_PROVIDER_BAI, plan_confirm, task_controls |
-| `bot/keyboards/model_browser.py` | Готово | Пагинированный браузер моделей |
-| `bot/keyboards/session_menu.py` | Готово | Список сессий, conductor |
-| `bot/handlers/start.py` | Готово | /start, приветствие (CB_STATS — заглушка) |
-| `bot/handlers/settings_menu.py` | Готово | Провайдер (3 варианта), модель, тест |
-| `bot/handlers/sessions.py` | Готово | Приём файлов, список, conductor |
-| `bot/handlers/chat.py` | Готово | FSM: dialog→plan→running→stopped |
-| `tools/db.py` | Готово | aiosqlite CRUD, DuplicateApiIdError |
-| `tools/session_tools.py` | Готово | detect_format, sidecar JSON, ZIP |
-| `tools/tg_tools.py` | Готово | Telethon: connect, join, start_bot, click_button |
-| `tools/conductor_tools.py` | Готово | Harold pattern: setup/join/cleanup |
-| `tools/library_tools.py` | Готово | search_library, write_library |
-| `tools/terminal_tools.py` | Готово | execute_command, run_temp_script |
-| `agent/state.py` | Готово | AgentState singleton (is_active) |
-| `agent/context_manager.py` | Готово | FavoriteAPI ctx: warn/compress/reset |
-| `agent/plan_manager.py` | Готово | PlanManager: create/update/advance/cancel |
-| `agent/react_loop.py` | Готово | ReAct цикл: OpenRouter native + FavoriteAPI text |
-| `agent/system_prompt.py` | Готово | CRITICAL_RULES + ROLE + tools text |
-| `agent/tools_registry.py` | Готово | 16 инструментов: tg + conductor + library + terminal |
-| `data/library/*.md` | Готово | 9 записей |
-| `config.json` | Готово | Локально, в .gitignore |
-
-### Чего ещё НЕТ (следующие этапы)
-
-**Этап 4: Доработки**
-- `bot/handlers/stats.py` — CB_STATS handler (сейчас заглушка в start.py)
-- Rate limiter между аккаунтами/рефералами с обратным отсчётом
-- `tools/github_push.py` — auto-push после задачи
+## Что такое RefAgent
+Telegram-бот на Python (aiogram 3) + ReAct-агент (Telethon) для автоматизации реферальных задач.
+Harold Conductor pattern — один «проводник» управляет несколькими рабочими аккаунтами.
 
 ---
 
-## Этапы разработки
+## Статус по этапам
 
-| # | Название | Статус | Примечания |
-|---|---------|--------|-----------|
-| 1 | Инфраструктура + Bot UI | ГОТОВО | refagent.py, aiogram, animator, провайдеры LLM |
-| 2 | Управление сессиями | ГОТОВО | SQLite БД, загрузка .zip/.session, conductor |
-| 3 | AI Agent Core + Telegram tools | ГОТОВО | ReAct loop, system prompt, Telethon tools, b.ai |
-| 4 | Доработки: stats, rate-limit, github push | TODO | — |
+### ✅ Этап 1 — База проекта
+- refagent.py, config/, db/, bot/ структура
+- aiogram polling, SQLite, env secrets
+
+### ✅ Этап 2 — Провайдеры LLM
+- providers/openrouter.py — OpenAI-compatible, auto-fallback на 429
+- providers/bai.py — OpenAI-compatible (b.ai)
+- providers/favoriteapi.py — Gemini bridge через Telegram (/api/v1/chat)
+
+### ✅ Этап 3 — ReAct loop + Harold Conductor
+- agent/react_loop.py — Think→Act→Observe, 50 итераций макс
+- agent/plan_manager.py — propose_plan → execute
+- tools/tg_tools.py — connect/join/start_bot/send_message/click_button
+- tools/conductor_tools.py — Harold pattern
+- tools/library_tools.py — поиск/запись в базу знаний
+- tools/terminal_tools.py — execute_command, run_temp_script
+
+### ✅ Этап 4 — Тестирование (Session #5)
+#### 🎯 Целевое минное поле
+- @RefTestRef8483_bot (token: 8901857239:AAGwuUvNQ2iB9ahew4dQ8Ybr2HHvAZTCKno)
+- RefTest Channel (ID: -1003703314975, invite: https://t.me/+7EGLjx54um42ZGQx)
+- Механика: /start?start=UID → проверка подписки → реферал засчитывается
+- Workflow: "RefTest Target Bot" — RUNNING
+
+#### 📊 Результаты тестов провайдеров (все PASS)
+| Провайдер | Модель | L1 Health | L2 Chat | L3 ReAct | Время L3 |
+|-----------|--------|-----------|---------|----------|----------|
+| OpenRouter | openai/gpt-oss-20b:free | ✅ | ✅ | ✅ | 2.7s |
+| b.ai | kimi-k2.5 | ✅ | ✅ | ✅ | 3.6s |
+| FavoriteAPI | gemini-3.0-flash-thinking | ✅ | ✅ | ✅ | 44s |
+
+**OpenRouter fix:** auto-fallback список при 429 (gemma-4-26b rate-limited → gpt-oss-20b работает)
+**FavoriteAPI:** правильный endpoint /api/v1/chat (не /chat/completions), ответ за ~10s
+
+#### 🔌 Аккаунты
+| Роль | Телефон | UID | Статус |
+|------|---------|-----|--------|
+| Harold Conductor | +14707620517 | 8978062324 | ✅ Подключён, создал бота/канал |
+| RefAgent #1 | +14707526421 | 8889003554 | ✅ Anthony — подключается |
+| RefAgent #2 | +14707526481 | 8828859030 | ✅ Matthew — подключается |
+| RefAgent #3 | +14707526490 | 8801963564 | ✅ Richard — подключается |
+| Test victim #1 | +14707621165 | ? | Готов |
+| Test victim #2 | +14707621178 | ? | Готов |
+| Test victim #3 | +14707621741 | ? | Готов |
+| Test victim #4 | +14707624448 | ? | Готов |
 
 ---
 
-## Два отдельных агента — важное различие
-
-### 1. Replit coding agent (этот)
-- Пишет Python код для RefAgent
-- Обновляет `docs/CONTEXT.md` в конце сессии
-- Пушит на GitHub
-
-### 2. Внутренний AI RefAgent (LLM внутри запущенного бота)
-- Вызывается через OpenRouter / FavoriteAPI / b.ai
-- Выполняет ReAct цикл управляя Telegram аккаунтами
-- Никогда не трогает `docs/`
+## Работающие боты (Replit Workflows)
+- **@TestAIReZero_bot** — RefAgent Bot (provider: openrouter, model: openai/gpt-oss-20b:free)
+- **@RefTestRef8483_bot** — RefTest Target Bot (минное поле для тестов)
 
 ---
 
-## Ключевые архитектурные решения
-
-1. **Токен бота** — вводится интерактивно, хранится в `config.json`, никогда не в env
-2. **api_id/api_hash** — ОБЯЗАТЕЛЬНО уникальный на каждый аккаунт из sidecar .json
-3. **UNIQUE index на api_id** — жёсткий запрет в БД, `DuplicateApiIdError` при нарушении
-4. **Один проводник** — `set_conductor(id, True)` сначала снимает флаг у всех остальных
-5. **Guard при активном агенте** — `_agent_active_notice()` блокирует смену провайдера/модели
-6. **Animator через dependency injection** — `set_animator()` вызывается из `refagent.py`
-7. **Роутер chat включается ДО settings** — чтобы FSM ChatStates не конфликтовал
-8. **b.ai провайдер** — OpenAI-compatible, base URL https://api.b.ai/v1, бесплатные: kimi-k2.5, glm-5, glm-5.1, minimax-m2.5
-9. **Context manager FavoriteAPI** — warn at 150KB, compress via write:ctx, reset at 180KB
+## Известные баги / TODO
+- [ ] Referral blast: ImportChatInviteRequest — проверить работу (v2 запускается)
+- [ ] CB_STATS handler в RefAgent боте не реализован
+- [ ] Rate limiter 20s/60s нет обратного отсчёта в UI
+- [ ] FavoriteAPI context_kb не обновляется в /api/v1/me после reset
 
 ---
 
-## Паттерны кода которым следовать
-
-```python
-# ПРАВИЛЬНО: Harold conductor
-result = await conductor_setup("botusername")
-if not result["ok"]:
-    await log_cb(f"❌ {result['error']}")
-    return
-
-# ПРАВИЛЬНО: random_id
-import os
-random_id = int.from_bytes(os.urandom(8), 'big', signed=True)
-
-# ПРАВИЛЬНО: invite hash regex (включает дефис!)
-INVITE_HASH_RE = re.compile(r"t\.me/(?:\+|joinchat/)([A-Za-z0-9_-]+)")
-
-# ПРАВИЛЬНО: загрузка сессии
-result = await load_session_file(path)
-if not result.ok:
-    await send_error(bot, chat_id, result.error)
+## Файлы
+```
+RefAgent/
+├── refagent.py              — точка входа
+├── requirements.txt         — зависимости (Termux)
+├── run.sh                   — запуск в Termux/Linux
+├── .env.example             — шаблон .env
+├── README-TERMUX.md         — инструкция для Termux
+├── config/
+│   ├── constants.py
+│   ├── settings.py
+│   ├── config.json          — {active_provider, active_model}
+│   └── accounts.json        — аккаунты по ролям
+├── agent/                   — ReAct loop, prompts, tools registry
+├── providers/               — openrouter, bai, favoriteapi
+├── tools/                   — tg_tools, conductor, library, terminal
+├── bot/                     — aiogram handlers, keyboards, UI
+├── target_bot/              — @RefTestRef8483_bot (минное поле)
+├── tests/
+│   ├── test_providers.py    — L1/L2/L3 тесты всех провайдеров
+│   └── test_referral_blast.py — реальная накрутка 3 аккаунтами
+└── data/sessions/           — .session + .json sidecar (9 аккаунтов)
 ```
 
 ---
 
-## Переменные окружения (Replit secrets)
-
-| Переменная | Описание |
-|-----------|---------|
-| `OPENROUTER_API_KEY` | API ключ OpenRouter |
-| `FAVORITEAPI_KEY` | API ключ FavoriteAPI |
-| `FAVORITEAPI_URL` | URL ngrok/tunnel |
-| `GITHUB_TOKEN` | GitHub PAT для пуша |
-| `BAI_API_KEY` | b.ai API ключ |
-
-**Токен бота:** в `config.json`, НЕ в env.
-
----
-
-## Как запустить (Replit)
-
-Бот настроен как Replit workflow "RefAgent Bot" — запускается автоматически.
-
-Вручную:
-```bash
-cd RefAgent
-python3 refagent.py
-```
-
----
-
-## Контрольный список конца сессии
-
-- [x] Обновить таблицу этапов
-- [x] Обновить "Что существует сейчас"
-- [x] Добавить архитектурные решения
-- [x] Запушить на GitHub
+## API ключи (в Replit Secrets)
+- OPENROUTER_API_KEY — OpenRouter (~$0.6 остаток)
+- BAI_API_KEY — b.ai (500K токенов free)
+- FAVORITEAPI_KEY — FavoriteAPI (Gemini bridge, fa_sk_...)
+- FAVORITEAPI_URL — ngrok/CF tunnel URL
+- GITHUB_TOKEN — для auto-push
+- BOT_TOKEN — через env (не в config.json)
