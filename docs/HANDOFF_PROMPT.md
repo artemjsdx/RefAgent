@@ -1,63 +1,54 @@
 # RefAgent — Universal Session Handoff Prompt
 
 Copy the block below and paste it as your FIRST message in a new Replit session.
-Replace the values in [BRACKETS] with your actual keys.
+Replace values in [BRACKETS] with your actual keys.
 
 ---
 
 ```
-Ты продолжаешь разработку проекта RefAgent.
+Ты продолжаешь разработку проекта RefAgent на Replit.
 
-ПЕРВЫМ ДЕЛОМ:
-1. Склонируй или обнови репозиторий:
-   git clone https://github.com/artemjsdx/RefAgent.git
-   или если уже есть: git pull origin main
+ПЕРВЫМ ДЕЛОМ (до любого кода):
+1. Прочитай https://raw.githubusercontent.com/artemjsdx/RefAgent/main/docs/CONTEXT.md
+2. Прочитай https://raw.githubusercontent.com/artemjsdx/RefAgent/main/docs/ARCHITECTURE.md
+3. Посмотри таблицу этапов в CONTEXT.md — найди первый TODO и начни его
 
-2. Прочитай docs/CONTEXT.md — там текущее состояние проекта
-3. Прочитай docs/ARCHITECTURE.md — архитектурные решения
-4. Посмотри какой этап следующий в CONTEXT.md и начни его реализацию
+КЛЮЧИ (сохрани как Replit Secrets перед началом):
+- OPENROUTER_API_KEY = [вставь]
+- FAVORITEAPI_KEY = [вставь]
+- FAVORITEAPI_URL = [вставь ngrok/tunnel URL]
+- GITHUB_TOKEN = [вставь]
+- В файле config.json или при запуске: BOT_TOKEN = [токен @BotFather]
 
-КЛЮЧИ (подставь свои):
-- OPENROUTER_API_KEY = [твой ключ openrouter]
-- FAVORITEAPI_KEY = [твой ключ favoriteapi]  
-- FAVORITEAPI_URL = [твой ngrok/tunnel URL]
-- GITHUB_TOKEN = [твой github токен]
-- BOT_TOKEN = [токен телеграм бота от @BotFather]
-
-Сохрани их как секреты Replit перед началом работы.
-
-ВАЖНЫЕ ПРАВИЛА ПРОЕКТА (никогда не нарушать):
-1. Каждый Telegram аккаунт = свой api_id и api_hash. Никогда не шарить между аккаунтами.
-2. Conductor (Harold pattern) обязателен — 0% аккаунтов могут DM боту напрямую.
-3. Тайминг: 60с между зачислениями рефов, 15-30с между аккаунтами.
-4. Код по SOLID, комментарии блоками в коде, чисто и архитектурно.
-5. После каждой сессии обновить docs/CONTEXT.md и запушить на GitHub.
-
-СТИЛЬ КОДА:
+КОД — ОБЯЗАТЕЛЬНЫЙ СТИЛЬ:
 - Python 3.11+, async/await везде
 - Комментарии блоками: # ════════ SECTION NAME ════════
 - Никаких magic numbers — всё в config/constants.py
 - Каждый файл начинается с docstring описывающего его роль
 - Структура: RefAgent/ папка в корне workspace
 
-После прочтения CONTEXT.md скажи мне: какой этап следующий и что будешь делать.
-Потом сразу начинай — не нужно дополнительного подтверждения.
+В КОНЦЕ КАЖДОЙ СЕССИИ (делает Replit-агент, то есть ты):
+1. Обнови docs/CONTEXT.md — отметь завершённые этапы, добавь заметки
+2. Запушь все изменения на GitHub через GitHub API
+3. Напомни пользователю скопировать handoff-промпт для следующей сессии
 ```
 
 ---
 
-## What to do at end of each session
+## Что НЕ входит в этот промпт
 
-Before closing Replit, run:
+Правила для **реферального агента** (api_id уникальность, conductor, тайминги и т.д.)
+живут в `agent/system_prompt.py` и всегда передаются **внутреннему LLM-агенту RefAgent**
+при каждом запросе. Это не задача Replit-сессии — это часть кода самого RefAgent.
 
-```bash
-cd RefAgent
-git add -A
-git commit -m "Session #N: [brief description of what was done]"
-git push origin main
-```
+---
 
-And update `docs/CONTEXT.md`:
-- Mark completed stages ✅
-- Add notes about what works and what doesn't
-- Update "What exists right now" section
+## Кто что обновляет
+
+| Файл | Кто обновляет | Когда |
+|------|--------------|-------|
+| `docs/CONTEXT.md` | Replit-агент (я) | В конце каждой coding-сессии |
+| `docs/ARCHITECTURE.md` | Replit-агент | При смене архитектурных решений |
+| `docs/KNOWLEDGE_BASE.md` | Replit-агент | При добавлении новых telegram-знаний |
+| `agent/system_prompt.py` | Код RefAgent | Всегда передаётся ReAct-агенту |
+| `data/library/*.md` | ReAct-агент внутри RefAgent | При обнаружении новых ошибок в работе |
