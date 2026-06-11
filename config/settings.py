@@ -21,7 +21,7 @@ from config.constants import CONFIG_FILE, DATA_DIR, SESSIONS_DIR, LIBRARY_DIR, S
 class BotConfig:
     """Settings persisted in config.json (non-sensitive, user preferences)."""
     bot_token:       Optional[str] = None
-    active_provider: str           = "openrouter"   # "openrouter" | "favoriteapi"
+    active_provider: str           = "openrouter"   # "openrouter" | "favoriteapi" | "bai"
     active_model:    Optional[str] = None           # model id string, None = provider default
 
 
@@ -31,6 +31,7 @@ class EnvConfig:
     openrouter_api_key: Optional[str] = None
     favoriteapi_key:    Optional[str] = None
     favoriteapi_url:    Optional[str] = None
+    bai_api_key:        Optional[str] = None
     github_token:       Optional[str] = None
 
 
@@ -53,6 +54,7 @@ def load_settings() -> Settings:
         openrouter_api_key = os.getenv("OPENROUTER_API_KEY"),
         favoriteapi_key    = os.getenv("FAVORITEAPI_KEY"),
         favoriteapi_url    = os.getenv("FAVORITEAPI_URL"),
+        bai_api_key        = os.getenv("BAI_API_KEY"),
         github_token       = os.getenv("GITHUB_TOKEN"),
     )
 
