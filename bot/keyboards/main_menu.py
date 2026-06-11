@@ -26,6 +26,7 @@ CB_SETTINGS_BACK     = "settings:back"
 
 CB_PROVIDER_OR       = "provider:openrouter"
 CB_PROVIDER_FA       = "provider:favoriteapi"
+CB_PROVIDER_BAI      = "provider:bai"
 CB_PROVIDER_BACK     = "provider:back"
 
 
@@ -57,13 +58,13 @@ def settings_keyboard() -> InlineKeyboardMarkup:
 
 
 def provider_select_keyboard(active: str) -> InlineKeyboardMarkup:
-    """active: 'openrouter' | 'favoriteapi'"""
-    or_mark = " (активен)" if active == "openrouter"  else ""
-    fa_mark = " (активен)" if active == "favoriteapi" else ""
+    """active: 'openrouter' | 'favoriteapi' | 'bai'"""
+    mark = lambda p: " ✓ активен" if active == p else ""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"OpenRouter{or_mark}",  callback_data=CB_PROVIDER_OR)],
-        [InlineKeyboardButton(text=f"FavoriteAPI{fa_mark}", callback_data=CB_PROVIDER_FA)],
-        [InlineKeyboardButton(text="Назад",                 callback_data=CB_SETTINGS_BACK)],
+        [InlineKeyboardButton(text=f"OpenRouter{mark('openrouter')}",   callback_data=CB_PROVIDER_OR)],
+        [InlineKeyboardButton(text=f"FavoriteAPI{mark('favoriteapi')}", callback_data=CB_PROVIDER_FA)],
+        [InlineKeyboardButton(text=f"b.ai (бесплатно 500K){mark('bai')}", callback_data=CB_PROVIDER_BAI)],
+        [InlineKeyboardButton(text="Назад",                              callback_data=CB_SETTINGS_BACK)],
     ])
 
 
