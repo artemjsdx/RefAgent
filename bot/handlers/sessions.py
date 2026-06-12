@@ -238,11 +238,19 @@ async def cb_upload_prompt(query: CallbackQuery) -> None:
 async def handle_document(message: Message, state: FSMContext, bot: Bot) -> None:
     """Обработать входящий документ.
 
-    .zip / .session → загрузка сессий в базу.
-    Всё остальное   → буферизуется в file_buffer для последующей задачи агенту.
+    .zip / .session → загрузка сессий в базу (только при активном чате).
+    Всё остальное   → буферизуется в file_buffer для следующей задачи агенту.
+
+    Файлы изолированы по чату: active_chat_id — ключ sandbox.
     """
     doc: Document = message.document
     fname = doc.file_name or ""
+
+    # active_chat_id — ключ sandbox (из FSM данных активного чата)
+    fsm_data       = await state.get_data()
+    active_chat_id = fsm_data.get("active_chat_id")
+
+    tg_chat_id = message.chat.id   # только для аниматора
 
     # ── Нессионные файлы → file_buffer для агента ─────────
     if not (fname.endswith(".zip") or fname.endswith(".session")):
@@ -253,7 +261,7 @@ async def handle_document(message: Message, state: FSMContext, bot: Bot) -> None
             mime_type = doc.mime_type or "application/octet-stream",
             size      = doc.file_size or 0,
         )
-        push_file(message.chat.id, attachment)
+        push_file(active_chat_id, attachment)   # sandbox по active_chat_id
         size_kb = (doc.file_size or 0) // 1024
         await message.reply(
             f"📎 <code>{fname}</code> ({size_kb} КБ) прикреплён к следующей задаче.\n"
@@ -262,25 +270,36 @@ async def handle_document(message: Message, state: FSMContext, bot: Bot) -> None
         )
         return
 
-    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    dest = SESSIONS_DIR / fname
+    # ── Сессионные файлы требуют активного чата ──────────
+    if not active_chat_id:
+        await message.reply(
+            "❌ <b>Чат не выбран.</b>\n\n"
+            "Создай или открой чат, затем загрузи сессии — "
+            "они будут привязаны именно к нему.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Директория сессий изолирована по чату: data/sessions/chat_{id}/
+    chat_sessions_dir = SESSIONS_DIR / f"chat_{active_chat_id}"
+    chat_sessions_dir.mkdir(parents=True, exist_ok=True)
+    dest = chat_sessions_dir / fname
 
     # ── Скачать файл ──────────────────────────────────────
-    anim    = _animator
-    msg_id  = None
-    chat_id = message.chat.id
+    anim   = _animator
+    msg_id = None
 
     if anim:
-        msg_id = await anim.start(chat_id, "saving")
+        msg_id = await anim.start(tg_chat_id, "saving")
 
     await bot.download(doc, destination=str(dest))
 
     # ── ZIP: обработать сразу ─────────────────────────────
     if fname.endswith(".zip"):
-        results = await extract_and_load_zip(dest)
+        results = await extract_and_load_zip(dest, chat_id=active_chat_id)
         report  = format_load_report(results)
         if anim and msg_id:
-            await anim.finalize(chat_id, msg_id, report)
+            await anim.finalize(tg_chat_id, msg_id, report)
         else:
             await message.answer(report, parse_mode="HTML")
         return
@@ -290,20 +309,21 @@ async def handle_document(message: Message, state: FSMContext, bot: Bot) -> None
     sidecar_path = dest.with_suffix(".json")
     if sidecar_path.exists():
         # Sidecar уже есть — грузим напрямую
-        results = [await load_session_file(dest)]
+        results = [await load_session_file(dest, chat_id=active_chat_id)]
         report  = format_load_report(results)
         if anim and msg_id:
-            await anim.finalize(chat_id, msg_id, report)
+            await anim.finalize(tg_chat_id, msg_id, report)
         else:
             await message.answer(report, parse_mode="HTML")
         return
 
     # Sidecar не найден — начинаем FSM
     if anim and msg_id:
-        await anim.finalize(chat_id, msg_id, f"📄 Файл <code>{fname}</code> получен.")
+        await anim.finalize(tg_chat_id, msg_id, f"📄 Файл <code>{fname}</code> получен.")
 
     await state.set_state(SessionUpload.waiting_api_id)
     await state.update_data(session_path=str(dest))
+    # active_chat_id уже в state data — он сохранится через update_data
 
     await message.answer(
         f"Файл <code>{fname}</code> сохранён.\n\n"
@@ -359,9 +379,10 @@ async def fsm_receive_api_hash(message: Message, state: FSMContext) -> None:
         )
         return
 
-    data         = await state.get_data()
-    api_id       = data["api_id"]
-    session_path = Path(data["session_path"])
+    data           = await state.get_data()
+    api_id         = data["api_id"]
+    session_path   = Path(data["session_path"])
+    active_chat_id = data.get("active_chat_id")
 
     # Создать sidecar JSON
     sidecar = session_path.with_suffix(".json")
@@ -370,21 +391,24 @@ async def fsm_receive_api_hash(message: Message, state: FSMContext) -> None:
         encoding="utf-8",
     )
 
-    await state.clear()
+    # Восстановить dialog-состояние с active_chat_id (не clear — чтобы не потерять чат)
+    from bot.handlers.chat import ChatStates
+    await state.set_state(ChatStates.dialog)
+    await state.set_data({"active_chat_id": active_chat_id})
 
     # Загрузить сессию
-    anim    = _animator
-    msg_id  = None
-    chat_id = message.chat.id
+    anim       = _animator
+    msg_id     = None
+    tg_chat_id = message.chat.id
 
     if anim:
-        msg_id = await anim.start(chat_id, "saving")
+        msg_id = await anim.start(tg_chat_id, "saving")
 
-    results = [await load_session_file(session_path)]
+    results = [await load_session_file(session_path, chat_id=active_chat_id)]
     report  = format_load_report(results)
 
     if anim and msg_id:
-        await anim.finalize(chat_id, msg_id, report)
+        await anim.finalize(tg_chat_id, msg_id, report)
     else:
         await message.answer(report, parse_mode="HTML")
 

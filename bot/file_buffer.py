@@ -1,16 +1,17 @@
 """
 file_buffer.py — Буфер прикреплённых файлов для чата с агентом.
 
-Telegram позволяет отправить файл (.session, .zip и т.п.) до текстового сообщения.
-Буфер накапливает вложения для конкретного chat_id и возвращает их
-когда пользователь отправляет текстовую задачу.
+Ключ буфера — sandbox_id (active_chat_id из ChatRecord), а НЕ Telegram chat_id.
+Это обеспечивает изоляцию файлов между разными именованными чатами:
+файлы, прикреплённые в «Чат1», не попадут в «Чат2».
 
 Использование:
-  push_file(chat_id, attachment)   — добавить вложение в буфер
-  pop_files(chat_id)               — забрать все вложения и очистить буфер
-  has_files(chat_id)               — проверить, есть ли ожидающие вложения
+  push_file(sandbox_id, attachment)   — добавить вложение в буфер
+  pop_files(sandbox_id)               — забрать все вложения и очистить буфер
+  has_files(sandbox_id)               — проверить, есть ли ожидающие вложения
+  clear_files(sandbox_id)             — очистить буфер без возврата
 
-FileAttachment.context_line()     — строка для вставки в контекст агента
+FileAttachment.context_line()        — строка для вставки в контекст агента
 """
 
 from __future__ import annotations
@@ -56,30 +57,30 @@ class FileAttachment:
 # IN-MEMORY БУФЕР
 # ════════════════════════════════════════════════════
 
-# chat_id → список FileAttachment
-_buffer: dict[int, list[FileAttachment]] = {}
+# sandbox_id (active_chat_id) → список FileAttachment
+_buffer: dict[Optional[int], list[FileAttachment]] = {}
 
 
-def push_file(chat_id: int, attachment: FileAttachment) -> None:
-    """Добавить вложение в буфер для данного чата."""
-    if chat_id not in _buffer:
-        _buffer[chat_id] = []
-    _buffer[chat_id].append(attachment)
+def push_file(sandbox_id: Optional[int], attachment: FileAttachment) -> None:
+    """Добавить вложение в буфер для данного чата (sandbox_id = active_chat_id)."""
+    if sandbox_id not in _buffer:
+        _buffer[sandbox_id] = []
+    _buffer[sandbox_id].append(attachment)
 
 
-def pop_files(chat_id: int) -> list[FileAttachment]:
+def pop_files(sandbox_id: Optional[int]) -> list[FileAttachment]:
     """
     Забрать все вложения из буфера и очистить его.
     Возвращает пустой список если вложений нет.
     """
-    return _buffer.pop(chat_id, [])
+    return _buffer.pop(sandbox_id, [])
 
 
-def has_files(chat_id: int) -> bool:
+def has_files(sandbox_id: Optional[int]) -> bool:
     """Проверить есть ли ожидающие вложения для данного чата."""
-    return bool(_buffer.get(chat_id))
+    return bool(_buffer.get(sandbox_id))
 
 
-def clear_files(chat_id: int) -> None:
+def clear_files(sandbox_id: Optional[int]) -> None:
     """Явно очистить буфер без возврата (например при отмене задачи)."""
-    _buffer.pop(chat_id, None)
+    _buffer.pop(sandbox_id, None)

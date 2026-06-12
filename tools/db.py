@@ -34,6 +34,7 @@ class AccountRecord:
     id:           Optional[int] = None
     added_at:     Optional[str] = None
     last_used:    Optional[str] = None
+    chat_id:      Optional[int] = None   # к какому чату относится аккаунт
 
 
 # ════════════════════════════════════════════════════
@@ -53,7 +54,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     is_conductor INTEGER NOT NULL DEFAULT 0,
     session_path TEXT    NOT NULL,
     added_at     TEXT    NOT NULL DEFAULT (datetime('now')),
-    last_used    TEXT
+    last_used    TEXT,
+    chat_id      INTEGER
 );
 """
 
@@ -73,6 +75,11 @@ async def init_db() -> None:
         await db.execute("PRAGMA busy_timeout=5000;")
         await db.executescript(SCHEMA)
         await db.executescript(CHATS_SCHEMA)
+        # Миграция: добавить chat_id если ещё нет (для существующих БД)
+        try:
+            await db.execute("ALTER TABLE accounts ADD COLUMN chat_id INTEGER")
+        except Exception:
+            pass  # колонка уже есть
         await db.commit()
 
 
@@ -110,8 +117,8 @@ async def add_account(rec: AccountRecord) -> int:
             """
             INSERT INTO accounts
                 (phone, uid, api_id, api_hash, format, status, uid_category,
-                 is_conductor, session_path, added_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 is_conductor, session_path, added_at, chat_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 rec.phone,
@@ -124,6 +131,7 @@ async def add_account(rec: AccountRecord) -> int:
                 int(rec.is_conductor),
                 rec.session_path,
                 datetime.now().isoformat(sep=" ", timespec="seconds"),
+                rec.chat_id,
             ),
         )
         await db.commit()
@@ -140,6 +148,18 @@ async def get_all_accounts() -> list[AccountRecord]:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM accounts ORDER BY added_at DESC"
+        ) as cur:
+            rows = await cur.fetchall()
+    return [_row_to_record(r) for r in rows]
+
+
+async def get_accounts_for_chat(chat_id: int) -> list[AccountRecord]:
+    """Вернуть аккаунты конкретного чата (песочница по chat_id)."""
+    async with aiosqlite.connect(SESSIONS_DB) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM accounts WHERE chat_id = ? ORDER BY added_at DESC",
+            (chat_id,),
         ) as cur:
             rows = await cur.fetchall()
     return [_row_to_record(r) for r in rows]
@@ -264,4 +284,5 @@ def _row_to_record(row) -> AccountRecord:
         session_path = row["session_path"],
         added_at     = row["added_at"],
         last_used    = row["last_used"],
+        chat_id      = row["chat_id"] if "chat_id" in row.keys() else None,
     )

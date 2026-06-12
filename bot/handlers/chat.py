@@ -120,10 +120,10 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
         )
         return
 
-    chat_id = message.chat.id
+    tg_chat_id = message.chat.id   # Telegram chat_id — только для аниматора
 
-    # Собрать прикреплённые файлы
-    pending = pop_files(chat_id)
+    # Собрать прикреплённые файлы из sandbox этого чата (ключ = chat.id, не Telegram chat_id)
+    pending = pop_files(chat.id)
     user_text = message.text or ""
     if pending:
         attachment_lines = "\n".join(f.context_line() for f in pending)
@@ -131,7 +131,7 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
 
     anim = {"msg_id": None}
     if _animator:
-        anim["msg_id"] = await _animator.start(chat_id, "thinking")
+        anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
 
     from agent.status_event import StatusEvent
     from agent.status_event import KIND_THOUGHT as _KIND_THOUGHT
@@ -143,15 +143,15 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
         if not raw:
             return
         if _animator and anim["msg_id"]:
-            await _animator.finalize(chat_id, anim["msg_id"], f"💭 {raw[:500]}")
+            await _animator.finalize(tg_chat_id, anim["msg_id"], f"💭 {raw[:500]}")
             anim["msg_id"] = None
         if _animator:
-            anim["msg_id"] = await _animator.start(chat_id, "thinking")
+            anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
 
     try:
         react  = ReactLoop(provider=provider, log_cb=_dialog_log_cb, bot=bot)
         result = await react.run(
-            chat_id      = chat_id,
+            chat_id      = tg_chat_id,
             user_message = user_text,
         )
 
@@ -162,7 +162,7 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
             if _animator and anim["msg_id"]:
                 await _animator.stop_only(anim["msg_id"])
                 try:
-                    await bot.delete_message(chat_id, anim["msg_id"])
+                    await bot.delete_message(tg_chat_id, anim["msg_id"])
                 except Exception:
                     pass
                 anim["msg_id"] = None
@@ -179,14 +179,14 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
             )
         else:
             if _animator and anim["msg_id"]:
-                await _animator.finalize(chat_id, anim["msg_id"], result)
+                await _animator.finalize(tg_chat_id, anim["msg_id"], result)
             else:
                 await message.answer(result, parse_mode="HTML", reply_markup=idle_keyboard())
 
     except Exception as e:
         log.exception(f"[Chat] Ошибка диалога: {e}")
         if _animator and anim["msg_id"]:
-            await _animator.finalize(chat_id, anim["msg_id"], f"❌ Ошибка: {e}")
+            await _animator.finalize(tg_chat_id, anim["msg_id"], f"❌ Ошибка: {e}")
         else:
             await message.reply(f"❌ Ошибка: {e}", reply_markup=idle_keyboard())
 

@@ -174,9 +174,14 @@ class SessionLoadResult:
         return f"SessionLoadResult(phone={self.phone}, ok={self.ok}, error={self.error})"
 
 
-async def load_session_file(session_path: Path) -> SessionLoadResult:
+async def load_session_file(
+    session_path: Path,
+    chat_id: Optional[int] = None,
+) -> SessionLoadResult:
     """
     Загрузить одну .session в БД.
+
+    chat_id — к какому чату привязать аккаунт (None = глобальный, без чата).
     
     Шаги:
       1. detect_format
@@ -216,6 +221,7 @@ async def load_session_file(session_path: Path) -> SessionLoadResult:
             uid_category = category,
             is_conductor = False,
             session_path = str(session_path),
+            chat_id      = chat_id,
         )
 
         acc_id = await add_account(rec)
@@ -233,14 +239,22 @@ async def load_session_file(session_path: Path) -> SessionLoadResult:
 # ЗАГРУЗКА ZIP-АРХИВА
 # ════════════════════════════════════════════════════
 
-async def extract_and_load_zip(zip_path: Path) -> list[SessionLoadResult]:
+async def extract_and_load_zip(
+    zip_path: Path,
+    chat_id: Optional[int] = None,
+) -> list[SessionLoadResult]:
     """
     Распаковать .zip архив и загрузить все найденные .session файлы.
     Ожидает структуру: файлы .session и .json рядом в архиве.
+
+    chat_id — к какому чату привязать аккаунты (песочница).
     
     Возвращает список результатов для каждой найденной сессии.
     """
-    extract_dir = SESSIONS_DIR / zip_path.stem
+    if chat_id is not None:
+        extract_dir = SESSIONS_DIR / f"chat_{chat_id}" / zip_path.stem
+    else:
+        extract_dir = SESSIONS_DIR / zip_path.stem
     extract_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -274,7 +288,7 @@ async def extract_and_load_zip(zip_path: Path) -> list[SessionLoadResult]:
             if alt.exists():
                 shutil.copy(alt, json_src)
 
-        result = await load_session_file(sf)
+        result = await load_session_file(sf, chat_id=chat_id)
         results.append(result)
 
     return results
