@@ -1,7 +1,5 @@
 """
-start.py — /start хендлер и роутинг главного меню.
-
-CB_SESSIONS теперь обрабатывается в bot/handlers/sessions.py.
+start.py — /start хендлер и навигация главного меню.
 """
 
 from aiogram import Router, F
@@ -10,39 +8,26 @@ from aiogram.filters import CommandStart
 
 from bot.keyboards.main_menu import (
     main_menu_keyboard, back_to_main_keyboard,
-    CB_CHAT, CB_STATS, CB_ABOUT, CB_BACK_MAIN,
+    CB_STATS, CB_ABOUT, CB_BACK_MAIN,
 )
 from config.constants import BOT_NAME, BOT_VERSION
-from config.settings import get_settings
 
 router = Router()
 
 
 # ════════════════════════════════════════════════════
-# /start — ПРИВЕТСТВИЕ
+# /start
 # ════════════════════════════════════════════════════
 
-WELCOME_TEXT = """
-<b>{name} v{version}</b>
-
-Автономный агент для реферальных программ Telegram.
-
-<b>Настрой перед запуском:</b>
-
-  1. <b>LLM Провайдер</b>
-     Настройки → LLM Провайдер
-     Нужен API ключ OpenRouter или FavoriteAPI
-
-  2. <b>Сессии аккаунтов</b>
-     Сессии → Загрузить сессии
-     Отправь .zip или .session файлы
-
-  3. <b>Проводник</b>
-     Сессии → выбери аккаунт → Назначить проводником
-     Прогретый аккаунт для обхода DM-ограничений
-
-<i>Нажми "Чат с агентом" чтобы поставить задачу.</i>
-""".strip()
+WELCOME_TEXT = (
+    "🤖 <b>{name} v{version}</b>\n\n"
+    "Автономный агент для реферальных программ Telegram.\n\n"
+    "<b>Быстрый старт:</b>\n"
+    "  1️⃣  <b>➕ Новый чат</b> — введи название, выбери провайдер и API ключ\n"
+    "  2️⃣  <b>🗄️ Сессии</b> — загрузи .zip с аккаунтами\n"
+    "  3️⃣  Напиши задачу — агент составит план и спросит подтверждение\n\n"
+    "<i>Каждый чат хранит свой API ключ — безопасно для open source.</i>"
+)
 
 
 @router.message(CommandStart())
@@ -68,24 +53,6 @@ async def cb_back_main(query: CallbackQuery) -> None:
     await query.answer()
 
 
-@router.callback_query(F.data == CB_CHAT)
-async def cb_chat(query: CallbackQuery) -> None:
-    settings = get_settings()
-    provider = settings.bot.active_provider
-    model    = settings.bot.active_model or "по умолчанию"
-    await query.message.edit_text(
-        f"<b>Чат с агентом</b>\n\n"
-        f"Провайдер: <code>{provider}</code>\n"
-        f"Модель: <code>{model}</code>\n\n"
-        f"Напиши задачу — реф ссылку, условия зачисления, количество аккаунтов.\n"
-        f"Агент составит план и покажет его перед запуском.\n\n"
-        f"<i>Требуется настроить провайдер LLM.</i>",
-        parse_mode   = "HTML",
-        reply_markup = back_to_main_keyboard(),
-    )
-    await query.answer()
-
-
 @router.callback_query(F.data == CB_STATS)
 async def cb_stats(query: CallbackQuery) -> None:
     from tools.db import get_all_accounts
@@ -96,20 +63,17 @@ async def cb_stats(query: CallbackQuery) -> None:
     active     = sum(1 for a in accounts if a.status == "ACTIVE")
     frozen     = sum(1 for a in accounts if a.status == "FROZEN")
     cond       = sum(1 for a in accounts if a.is_conductor)
-
     task_stats = await get_stats()
-    tasks_done = task_stats["total"]
-    refs_ok    = task_stats["success"]
 
     await query.message.edit_text(
-        "<b>Статистика</b>\n\n"
+        "📊 <b>Статистика</b>\n\n"
         "<pre>"
-        f"{'Задач выполнено':<22} {tasks_done}\n"
-        f"{'Рефов засчитано':<22} {refs_ok}\n"
+        f"{'Задач выполнено':<22} {task_stats['total']}\n"
+        f"{'Рефов засчитано':<22} {task_stats['success']}\n"
         f"{'Аккаунтов в пуле':<22} {acc_total}\n"
-        f"{'  активных':<22} {active}\n"
-        f"{'  замороженных':<22} {frozen}\n"
-        f"{'  проводников':<22} {cond}\n"
+        f"  {'активных':<20} {active}\n"
+        f"  {'замороженных':<20} {frozen}\n"
+        f"  {'проводников':<20} {cond}\n"
         "</pre>",
         parse_mode   = "HTML",
         reply_markup = back_to_main_keyboard(),
@@ -120,15 +84,17 @@ async def cb_stats(query: CallbackQuery) -> None:
 @router.callback_query(F.data == CB_ABOUT)
 async def cb_about(query: CallbackQuery) -> None:
     await query.message.edit_text(
-        f"<b>{BOT_NAME} v{BOT_VERSION}</b>\n\n"
+        f"ℹ️ <b>{BOT_NAME} v{BOT_VERSION}</b>\n\n"
         "Открытый инструмент автоматизации реферальных программ Telegram.\n\n"
-        "<b>GitHub:</b> github.com/artemjsdx/RefAgent\n\n"
-        "<b>Стек:</b> Python · aiogram 3 · Telethon · OpenRouter / FavoriteAPI\n\n"
-        "<b>Принципы:</b>\n"
-        "— Уникальный api_id/api_hash на каждый аккаунт\n"
-        "— Conductor pattern для обхода DM-ограничений\n"
-        "— Библиотека знаний об ошибках\n"
-        "— Plan before action",
+        "🔗 <b>GitHub:</b> github.com/artemjsdx/RefAgent\n\n"
+        "⚙️ <b>Стек:</b>\n"
+        "  Python · aiogram 3 · Telethon\n"
+        "  OpenRouter / FavoriteAPI / b.ai\n\n"
+        "🔒 <b>Принципы:</b>\n"
+        "  — Уникальный api_id/api_hash на каждый аккаунт\n"
+        "  — Conductor pattern для обхода DM-ограничений\n"
+        "  — API ключи хранятся только в твоих чатах\n"
+        "  — Plan before action",
         parse_mode   = "HTML",
         reply_markup = back_to_main_keyboard(),
     )

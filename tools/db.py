@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 async def init_db() -> None:
     """Создать таблицы при первом запуске. Безопасно вызывать повторно."""
+    from tools.chat_db import CHATS_SCHEMA
     SESSIONS_DB.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(SESSIONS_DB) as db:
         # WAL режим: параллельные читатели не блокируют писателя
@@ -71,6 +72,7 @@ async def init_db() -> None:
         # Ждать до 5с вместо немедленного SQLITE_BUSY
         await db.execute("PRAGMA busy_timeout=5000;")
         await db.executescript(SCHEMA)
+        await db.executescript(CHATS_SCHEMA)
         await db.commit()
 
 

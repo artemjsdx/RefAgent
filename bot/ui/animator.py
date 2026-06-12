@@ -98,7 +98,10 @@ class Animator:
 
     async def _animate(self, chat_id: int, msg_id: int, frames: list[str]) -> None:
         """Background task: cycles through frames, editing the message."""
-        for frame in cycle(frames):
+        frames_iter = cycle(frames)
+        next(frames_iter)   # SKIP first frame — already sent via send_message, editing to
+                            # same text raises TelegramBadRequest "message is not modified"
+        for frame in frames_iter:
             await asyncio.sleep(ANIMATOR_FRAME_DELAY)
             try:
                 await self._bot.edit_message_text(
@@ -107,6 +110,8 @@ class Animator:
                     message_id = msg_id,
                 )
             except TelegramBadRequest:
-                break   # message deleted externally — stop silently
+                break   # message deleted or not modified — stop silently
             except asyncio.CancelledError:
                 raise
+            except Exception:
+                break   # any other Telegram error — stop silently

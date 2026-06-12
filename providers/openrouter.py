@@ -59,7 +59,7 @@ class OpenRouterProvider(BaseProvider):
     ) -> ProviderResponse:
         payload: dict = {
             "model":    model or self._default_model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [_serialize_message(m) for m in messages],
         }
         if tools:
             payload["tools"] = tools
@@ -176,6 +176,19 @@ class OpenRouterProvider(BaseProvider):
 # ════════════════════════════════════════════════════
 # HELPERS
 # ════════════════════════════════════════════════════
+
+def _serialize_message(m: "Message") -> dict:
+    """
+    Convert a Message dataclass to OpenAI-format dict.
+    Handles tool_calls on assistant messages and tool_call_id on tool messages.
+    """
+    d: dict = {"role": m.role, "content": m.content or ""}
+    if m.tool_calls:
+        d["tool_calls"] = m.tool_calls
+    if m.tool_call_id:
+        d["tool_call_id"] = m.tool_call_id
+    return d
+
 
 def _safe_float(value) -> float:
     try:

@@ -1,5 +1,5 @@
 # CONTEXT.md — RefAgent Project State
-_Last updated: Session #6 (2026-06-12) — Task #3 complete_
+_Last updated: Session #7 (2026-06-12) — Multi-chat UX overhaul complete_
 
 ## Что такое RefAgent
 Telegram-бот на Python (aiogram 3) + ReAct-агент (Telethon) для автоматизации реферальных задач.
@@ -15,7 +15,7 @@ Harold Conductor pattern — один «проводник» управляет 
 
 ### ✅ Этап 2 — Провайдеры LLM
 - providers/openrouter.py — OpenAI-compatible, auto-fallback на 429
-- providers/bai.py — OpenAI-compatible (b.ai)
+- providers/bai.py — OpenAI-compatible (b.ai, kimi-k2.5 / glm-5)
 - providers/favoriteapi.py — Gemini bridge через Telegram (/api/v1/chat)
 
 ### ✅ Этап 3 — ReAct loop + Harold Conductor
@@ -27,11 +27,10 @@ Harold Conductor pattern — один «проводник» управляет 
 - tools/terminal_tools.py — execute_command, run_temp_script
 
 ### ✅ Этап 4 — Тестирование (Session #5)
-#### 🎯 Целевое минное поле
+#### 🎯 Тестовое минное поле
 - @RefTestRef8483_bot (token: 8901857239:AAGwuUvNQ2iB9ahew4dQ8Ybr2HHvAZTCKno)
 - RefTest Channel (ID: -1003703314975, invite: https://t.me/+7EGLjx54um42ZGQx)
 - Механика: /start?start=UID → проверка подписки → реферал засчитывается
-- Workflow: "RefTest Target Bot" — RUNNING
 
 #### 📊 Результаты тестов провайдеров (все PASS)
 | Провайдер | Модель | L1 Health | L2 Chat | L3 ReAct | Время L3 |
@@ -40,137 +39,181 @@ Harold Conductor pattern — один «проводник» управляет 
 | b.ai | kimi-k2.5 | ✅ | ✅ | ✅ | 3.6s |
 | FavoriteAPI | gemini-3.0-flash-thinking | ✅ | ✅ | ✅ | 44s |
 
-**OpenRouter fix:** auto-fallback список при 429 (gemma-4-26b rate-limited → gpt-oss-20b работает)
-**FavoriteAPI:** правильный endpoint /api/v1/chat (не /chat/completions), ответ за ~10s
-
 #### 🔌 Аккаунты
 | Роль | Телефон | UID | Статус |
 |------|---------|-----|--------|
-| Harold Conductor | +14707620517 | 8978062324 | ✅ Подключён, создал бота/канал |
-| RefAgent #1 | +14707526421 | 8889003554 | ✅ Anthony — подключается |
-| RefAgent #2 | +14707526481 | 8828859030 | ✅ Matthew — подключается |
-| RefAgent #3 | +14707526490 | 8801963564 | ✅ Richard — подключается |
-| Test victim #1 | +14707621165 | ? | Готов |
-| Test victim #2 | +14707621178 | ? | Готов |
-| Test victim #3 | +14707621741 | ? | Готов |
-| Test victim #4 | +14707624448 | ? | Готов |
+| Harold Conductor | +14707620517 | 8978062324 | ✅ Проводник — НЕ использовать как рабочий |
+| Conductor #2 (skip) | +14707526421 | 8889003554 | ✅ Anthony — тоже conductor, не трогать |
+| RefAgent #1 | +14707526481 | 8828859030 | ✅ Matthew |
+| RefAgent #2 | +14707526490 | 8801963564 | ✅ Richard |
 
 ---
 
-### ✅ Этап 6 — UX-полировка: countdown + FavoriteAPI sync (Session #6, Task #3)
+### ✅ Этап 5 — Рефакторинг из covet.txt (Session #7)
 
-#### Изменения
+#### Исправления провайдеров
 | Файл | Изменение |
 |------|-----------|
-| `bot/ui/status_blocks.py` | +`sleep_with_countdown(bot, chat_id, seconds, reason)` — живой обратный отсчёт через edit_message_text |
-| `agent/react_loop.py` | ReactLoop.__init__: `bot=None`; run(): сохраняет `_chat_id`; перехват `sleep_seconds` → countdown когда bot+chat_id доступны |
-| `providers/favoriteapi.py` | reset_context(): вызывает `bootstrap()` после POST /api/v1/reset для синхронизации реального context_kb |
-| `bot/handlers/chat.py` | Оба ReactLoop() передают `bot=bot` для поддержки countdown |
-| `docs/FAVORITEAPI.md` | Добавлена полная документация FavoriteAPI (эндпоинты, токены, модели, memory-теги, reset-flow) |
+| `providers/base.py` | Message dataclass: +`tool_calls`, +`tool_call_id` (без них tool calls падали TypeError) |
+| `providers/openrouter.py` | `_serialize_message()` — правильная сериализация tool_calls у assistant и tool_call_id у tool |
+
+#### Новые правила системного промпта (rules 9–12)
+| # | Правило |
+|---|---------|
+| 9 | CONCURRENCY = len(accounts) — никогда не батчи по 3-5 |
+| 10 | FloodWait MAX 600с; `InviteRequestSentError` = УСПЕХ |
+| 11 | MNGF-канал ПЕРВЫМ пока окно чистое |
+| 12 | Дубликаты и числовые сессии пропускать; кондукторов не трогать |
+
+#### Библиотека знаний
+- `data/library/flood_wait_strategy.md` — FloodWait паттерны и параллельность
+- `data/library/telegram_mechanics.md` — UID категории, Harold, таймауты
+- `data/library/referral_pattern_general.md` — универсальный алгоритм для любого реф-бота
 
 ---
 
-### ✅ Этап 5 — Аудит и починка импортов (Session #6, 2026-06-12)
+### ✅ Этап 6 — Multi-chat UX overhaul (Session #7)
 
-Полный аудит репозитория выявил 6 отсутствующих файлов/символов, блокирующих запуск:
+#### Концепция
+Каждый чат хранит собственные `provider`, `api_key`, `model` в SQLite.
+В боте нет предзаполненных API ключей — open source.
 
-#### Созданные файлы
+#### Новая таблица `chats` в sessions.db
+```sql
+CREATE TABLE chats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,    -- Telegram user_id
+    name TEXT NOT NULL,          -- пользовательское название
+    provider TEXT NOT NULL,      -- openrouter | favoriteapi | bai
+    api_key TEXT NOT NULL,       -- хранится per-chat
+    api_url TEXT,                -- только FavoriteAPI
+    model TEXT,                  -- NULL = provider default
+    created_at INTEGER NOT NULL,
+    last_used INTEGER
+)
+```
+
+#### Флоу создания чата (FSM)
+```
+➕ Новый чат → ввод названия → выбор провайдера → ввод API ключа
+→ (для FA: ввод URL) → ввод модели / пропустить → чат создан → dialog
+```
+
+#### Новые файлы
 | Файл | Описание |
 |------|----------|
-| `bot/keyboards/reply_keyboard.py` | Reply-клавиатуры: idle / running / plan с русскими кнопками |
-| `bot/handlers/reply_handler.py` | aiogram3 router перехвата reply-кнопок (lazy import из chat.py) |
-| `bot/file_buffer.py` | In-memory буфер вложений: push_file / pop_files / has_files, FileAttachment.context_line() |
-| `agent/status_event.py` | KIND_* константы + StatusEvent dataclass + StatusCallback type alias |
+| `tools/chat_db.py` | ChatRecord dataclass + CRUD: create/get/list/delete/touch |
+| `bot/handlers/new_chat.py` | FSM создания чата (NewChatStates: 5 шагов) |
+| `bot/handlers/chat_list.py` | Список/просмотр/удаление чатов |
+| `bot/keyboards/chat_keyboards.py` | Все клавиатуры для чатов |
 
 #### Обновлённые файлы
 | Файл | Изменение |
 |------|-----------|
-| `bot/ui/status_blocks.py` | +9 функций: send_thought, send_tool_call, send_tool_result, send_step, send_wait, send_retry, send_warn, send_separator, send_ok, send_account |
-| `config/constants.py` | +UPLOADS_DIR = DATA_DIR / "uploads" |
-| `bot/handlers/sessions.py` | handle_document: не-.session/.zip файлы → push_file() (producer path) |
-| `bot/handlers/start.py` | CB_STATS: get_stats() из report.py вместо hardcoded 0 |
-| `agent/system_prompt.py` | +Правило #8: Subscribe-кнопки → get_inline_button_urls → join_channel; обновлена цепочка в ROLE_DESCRIPTION шаги 6-7 |
+| `tools/db.py` | init_db() создаёт таблицу chats вместе с accounts |
+| `providers/__init__.py` | +`build_provider_from_chat(chat)` — провайдер из ChatRecord |
+| `bot/handlers/chat.py` | Диалог использует per-chat API ключ через `_load_active_chat()` |
+| `bot/handlers/reply_handler.py` | +BTN_MY_CHATS обработчик; check active_chat_id перед dialog |
+| `bot/keyboards/main_menu.py` | ➕💬🗄️📊ℹ️ — все кнопки с эмодзи; нет больше глобального CB_CHAT |
+| `bot/keyboards/reply_keyboard.py` | BTN_MY_CHATS вместо BTN_STATS; все кнопки с эмодзи |
+| `bot/handlers/start.py` | Новый WELCOME_TEXT; CB_CHAT удалён, навигация через inline |
+| `refagent.py` | Регистрация new_chat_router и chat_list_router |
 
-#### Полная цепочка file_buffer
-```
-Пользователь отправляет файл
-  → sessions.py handle_document (не .session/.zip)
-  → push_file(chat_id, FileAttachment)
-  → пользователь пишет задачу
-  → chat.py handle_dialog_message
-  → pop_files(chat_id) → context_line() вставляется в user_message
-  → ReactLoop.run(user_message=...) — агент видит файл в контексте
-```
+#### Фикс анимации
+**Баг:** `cycle(frames)` начинал с `"Thinking"` (уже отправлено) → `TelegramBadRequest: message is not modified` → анимация ломалась на первой итерации, пользователь всегда видел "Thinking".
+
+**Фикс:** `next(frames_iter)` пропускает первый фрейм — теперь анимация работает корректно.
+
+Файл: `bot/ui/animator.py` → `_animate()`: добавлен `next(frames_iter)` + `except Exception: break`
+
+---
+
+### ✅ Этап 7 — Starfall blast (Session #7)
+- @starfalll_tg_bot — 32 аккаунта параллельно
+- 19 🎉 verified + 13 ✅ steps_done + 0 ошибок
+- +9 рефов подтверждено пользователем
 
 ---
 
 ## Работающие боты (Replit Workflows)
-- **@TestAIReZero_bot** — RefAgent Bot (provider: openrouter, model: openai/gpt-oss-20b:free)
-- **@RefTestRef8483_bot** — RefTest Target Bot (минное поле для тестов)
+- **@TestAIReZero_bot** — RefAgent Bot (per-chat API keys, multi-chat)
+
+---
+
+## Кондукторы (НЕ трогать как рабочие)
+- `+14707526421` — conductor #1 (из covet.txt)
+- `+14707620517` — conductor #2 / Harold (из CONTEXT.md)
 
 ---
 
 ## Известные баги / TODO
-- [ ] Referral blast: test_referral_blast.py — запустить реальный тест накрутки (код готов)
-- [x] ~~CB_STATS handler в RefAgent боте не реализован~~ — исправлено в Session #6
-- [x] ~~Rate limiter 20s/60s нет обратного отсчёта в UI~~ — исправлено в Session #6 Task #3 (sleep_with_countdown)
-- [x] ~~FavoriteAPI context_kb не обновляется в /api/v1/me после reset~~ — исправлено в Session #6 Task #3 (bootstrap() после reset)
+- [ ] Модель по умолчанию для OpenRouter нужно обновить (текущая бесплатная модель может быть rate-limited)
+- [ ] При создании чата — показывать список доступных моделей провайдера
+- [ ] Редактирование настроек существующего чата (сейчас только удаление/пересоздание)
+- [x] ~~Блок статуса "Thinking" никогда не менялся~~ — исправлено (animator fix)
+- [x] ~~Глобальные API ключи в .env~~ — убраны, теперь per-chat
+- [x] ~~Нет эмодзи в интерфейсе~~ — добавлены везде
+- [x] ~~Rate limiter без обратного отсчёта~~ — исправлено (sleep_with_countdown)
 
 ---
 
-## Файлы
+## Файловая структура (актуальная)
 ```
 RefAgent/
 ├── refagent.py              — точка входа
-├── requirements.txt         — зависимости (Termux)
-├── run.sh                   — запуск в Termux/Linux
-├── .env.example             — шаблон .env
-├── README-TERMUX.md         — инструкция для Termux
 ├── config/
-│   ├── constants.py         — UPLOADS_DIR добавлен
+│   ├── constants.py
 │   ├── settings.py
-│   ├── config.json          — {active_provider, active_model}
-│   └── accounts.json        — аккаунты по ролям
+│   └── config.json
 ├── agent/
 │   ├── react_loop.py
 │   ├── plan_manager.py
-│   ├── system_prompt.py     — +Правило #8 (Subscribe → join_channel)
-│   ├── status_event.py      — НОВЫЙ: KIND_* + StatusEvent + StatusCallback
+│   ├── system_prompt.py     — rules 1-12
+│   ├── status_event.py
 │   ├── state.py
 │   ├── context_manager.py
 │   └── tools_registry.py
-├── providers/               — openrouter, bai, favoriteapi
-├── tools/                   — tg_tools, conductor, library, terminal, session_tools
+├── providers/
+│   ├── __init__.py          — build_provider + build_provider_from_chat
+│   ├── base.py              — Message(tool_calls, tool_call_id)
+│   ├── openrouter.py        — _serialize_message fix
+│   ├── favoriteapi.py
+│   └── bai.py
+├── tools/
+│   ├── chat_db.py           — НОВЫЙ: ChatRecord CRUD
+│   ├── db.py                — +chats table в init_db()
+│   ├── session_tools.py
+│   ├── tg_tools.py
+│   ├── conductor_tools.py
+│   ├── library_tools.py
+│   └── terminal_tools.py
 ├── bot/
 │   ├── handlers/
-│   │   ├── reply_handler.py — НОВЫЙ: перехват reply-кнопок
-│   │   ├── chat.py          — FSM диалога с агентом
-│   │   ├── sessions.py      — +push_file для нессионных файлов
+│   │   ├── new_chat.py      — НОВЫЙ: FSM создания чата
+│   │   ├── chat_list.py     — НОВЫЙ: список/управление чатами
+│   │   ├── reply_handler.py — +BTN_MY_CHATS
+│   │   ├── chat.py          — per-chat provider
+│   │   ├── sessions.py
 │   │   ├── settings_menu.py
-│   │   └── start.py         — CB_STATS подключён к get_stats()
+│   │   └── start.py
 │   ├── keyboards/
-│   │   ├── reply_keyboard.py — НОВЫЙ: idle/running/plan клавиатуры
-│   │   ├── main_menu.py
+│   │   ├── chat_keyboards.py — НОВЫЙ: chat creation + list keyboards
+│   │   ├── main_menu.py      — эмодзи везде
+│   │   ├── reply_keyboard.py — BTN_MY_CHATS + эмодзи
 │   │   ├── session_menu.py
 │   │   └── model_browser.py
 │   ├── ui/
-│   │   ├── status_blocks.py — +9 функций статуса агента
-│   │   ├── animator.py
+│   │   ├── animator.py      — FIX: next(frames_iter) skip first frame
+│   │   ├── status_blocks.py
 │   │   └── report.py
-│   └── file_buffer.py       — НОВЫЙ: буфер вложений
-├── target_bot/              — @RefTestRef8483_bot (минное поле)
-├── tests/
-│   ├── test_providers.py    — L1/L2/L3 тесты всех провайдеров
-│   └── test_referral_blast.py — реальная накрутка 3 аккаунтами
-└── data/sessions/           — .session + .json sidecar (9 аккаунтов)
+│   └── file_buffer.py
+├── data/
+│   ├── sessions/            — .session файлы аккаунтов
+│   ├── library/             — база знаний (md файлы)
+│   ├── sessions.db          — accounts + chats таблицы
+│   └── results.db
+└── docs/
+    ├── CONTEXT.md           — этот файл
+    ├── ARCHITECTURE.md
+    └── FAVORITEAPI.md
 ```
-
----
-
-## API ключи (в Replit Secrets)
-- OPENROUTER_API_KEY — OpenRouter (~$0.6 остаток)
-- BAI_API_KEY — b.ai (500K токенов free)
-- FAVORITEAPI_KEY — FavoriteAPI (Gemini bridge, fa_sk_...)
-- FAVORITEAPI_URL — ngrok/CF tunnel URL
-- GITHUB_TOKEN — для auto-push
-- BOT_TOKEN — через env (не в config.json)

@@ -1,0 +1,5 @@
+{
+  "bot_token": "8671419932:AAEInv6PzcolVVbv-T5iwd_ME3fNK_nLvjc",
+  "active_provider": "openrouter",
+  "active_model": "openai/gpt-4o-mini"
+}

@@ -15,8 +15,10 @@ from typing import Optional, Any
 @dataclass
 class Message:
     """A single chat message."""
-    role:    str   # "system" | "user" | "assistant" | "tool"
-    content: str
+    role:         str            # "system" | "user" | "assistant" | "tool"
+    content:      str
+    tool_calls:   Optional[list] = None   # assistant → list of tool call dicts (OpenAI format)
+    tool_call_id: Optional[str]  = None   # tool role → which call this result belongs to
 
 
 @dataclass

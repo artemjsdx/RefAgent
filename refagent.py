@@ -107,6 +107,8 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     from bot.handlers.settings_menu import router as settings_router
     from bot.handlers.sessions      import router as sessions_router, set_animator as set_sessions_animator
     from bot.handlers.chat          import router as chat_router, set_animator as set_chat_animator
+    from bot.handlers.new_chat      import router as new_chat_router
+    from bot.handlers.chat_list     import router as chat_list_router
 
     animator = Animator(bot)
     set_sessions_animator(animator)
@@ -114,9 +116,12 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
 
     # ПОРЯДОК КРИТИЧЕН:
     # 1. reply_router — первым, перехватывает тексты reply-кнопок до dialog-хендлера
-    # 2. sessions, chat, settings — основная логика
-    # 3. start — последним (catch-all для CB_BACK_MAIN и навигации)
+    # 2. new_chat, chat_list — создание/управление чатами (до chat_router!)
+    # 3. sessions, chat, settings — основная логика
+    # 4. start — последним (catch-all для CB_BACK_MAIN и навигации)
     dp.include_router(reply_router)
+    dp.include_router(new_chat_router)
+    dp.include_router(chat_list_router)
     dp.include_router(sessions_router)
     dp.include_router(chat_router)
     dp.include_router(settings_router)
@@ -139,21 +144,7 @@ async def main() -> None:
     save_bot_config(settings.bot)
     set_settings(settings)
 
-    print(f"\n  Провайдер: {settings.bot.active_provider}")
-    print(f"  Модель:    {settings.bot.active_model or 'по умолчанию'}")
-
-    # Показать статус API ключей
-    env = settings.env
-    key_status = []
-    if env.openrouter_api_key:
-        key_status.append("OpenRouter ✓")
-    if env.favoriteapi_key:
-        key_status.append("FavoriteAPI ✓")
-    if env.bai_api_key:
-        key_status.append("b.ai ✓")
-    if not key_status:
-        key_status.append("⚠ API ключи не найдены!")
-    print(f"  API ключи: {', '.join(key_status)}")
+    print(f"\n  Режим: API ключи хранятся per-chat (open source режим)")
 
     print(f"\n  Инициализация базы данных...")
     await init_db()
