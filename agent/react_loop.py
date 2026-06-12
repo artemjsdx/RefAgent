@@ -253,10 +253,13 @@ class ReactLoop:
         provider:    BaseProvider,
         stop_event:  Optional[asyncio.Event] = None,
         log_cb:      Optional[StatusCallback] = None,
+        bot=None,    # Optional[aiogram.Bot] — for live countdown UI
     ):
         self._provider       = provider
         self._stop_event     = stop_event or asyncio.Event()
         self._log_cb         = log_cb
+        self._bot            = bot       # passed from chat.py for countdown
+        self._chat_id:       Optional[int] = None
         self._executor       = ToolExecutor()
         self._history:       list[Message] = []
         self._is_favoriteapi = isinstance(provider, FavoriteAPIProvider)
@@ -274,6 +277,7 @@ class ReactLoop:
         user_message: str,
         plan_steps:   Optional[list[str]] = None,
     ) -> str:
+        self._chat_id = chat_id          # store for countdown
         agent_state.set_active(True, chat_id)
         self._stop_event.clear()
         try:
@@ -387,7 +391,15 @@ class ReactLoop:
                     args_preview = _args_preview(tc["arguments"])
                     await self._emit(KIND_TOOL_CALL, tool=tool_name, args_preview=args_preview)
 
-                    obs = await self._executor.execute(tool_name, tc["arguments"])
+                    # ── sleep_seconds: use live countdown when bot available ──
+                    if tool_name == "sleep_seconds" and self._bot and self._chat_id:
+                        secs   = int(tc["arguments"].get("seconds", 0))
+                        reason = tc["arguments"].get("reason", "")
+                        from bot.ui.status_blocks import sleep_with_countdown
+                        await sleep_with_countdown(self._bot, self._chat_id, secs, reason)
+                        obs = json.dumps({"ok": True, "slept": secs}, ensure_ascii=False)
+                    else:
+                        obs = await self._executor.execute(tool_name, tc["arguments"])
 
                     # Inject result back into history
                     if response.has_tool_calls:
