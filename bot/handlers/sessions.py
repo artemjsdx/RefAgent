@@ -25,7 +25,8 @@ from bot.keyboards.session_menu import (
     ACCOUNTS_PER_PAGE, CB_SESS_UPLOAD, CB_SESS_BACK, CB_BACK_MAIN,
 )
 from bot.ui.animator import Animator
-from config.constants import SESSIONS_DIR
+from bot.file_buffer import push_file, FileAttachment
+from config.constants import SESSIONS_DIR, UPLOADS_DIR
 from tools.db import (
     get_all_accounts, get_account, get_conductor,
     set_conductor, update_status, delete_account,
@@ -235,15 +236,28 @@ async def cb_upload_prompt(query: CallbackQuery) -> None:
 
 @router.message(F.document)
 async def handle_document(message: Message, state: FSMContext, bot: Bot) -> None:
-    """Обработать входящий документ: .zip или .session файл."""
+    """Обработать входящий документ.
+
+    .zip / .session → загрузка сессий в базу.
+    Всё остальное   → буферизуется в file_buffer для последующей задачи агенту.
+    """
     doc: Document = message.document
     fname = doc.file_name or ""
 
+    # ── Нессионные файлы → file_buffer для агента ─────────
     if not (fname.endswith(".zip") or fname.endswith(".session")):
+        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        attachment = FileAttachment(
+            file_id   = doc.file_id,
+            file_name = fname,
+            mime_type = doc.mime_type or "application/octet-stream",
+            size      = doc.file_size or 0,
+        )
+        push_file(message.chat.id, attachment)
+        size_kb = (doc.file_size or 0) // 1024
         await message.reply(
-            "Поддерживаются только файлы <b>.zip</b> и <b>.session</b>.\n\n"
-            "Для загрузки нескольких сессий: отправь <b>.zip</b> архив.\n"
-            "Для одной сессии: отправь <b>.session</b> файл — бот запросит данные.",
+            f"📎 <code>{fname}</code> ({size_kb} КБ) прикреплён к следующей задаче.\n"
+            "Теперь напиши что нужно сделать.",
             parse_mode="HTML",
         )
         return
