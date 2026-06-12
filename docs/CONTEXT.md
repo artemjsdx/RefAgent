@@ -1,5 +1,5 @@
 # CONTEXT.md — RefAgent Project State
-_Last updated: Session #6 (2026-06-12)_
+_Last updated: Session #6 (2026-06-12) — Task #3 complete_
 
 ## Что такое RefAgent
 Telegram-бот на Python (aiogram 3) + ReAct-агент (Telethon) для автоматизации реферальных задач.
@@ -57,6 +57,19 @@ Harold Conductor pattern — один «проводник» управляет 
 
 ---
 
+### ✅ Этап 6 — UX-полировка: countdown + FavoriteAPI sync (Session #6, Task #3)
+
+#### Изменения
+| Файл | Изменение |
+|------|-----------|
+| `bot/ui/status_blocks.py` | +`sleep_with_countdown(bot, chat_id, seconds, reason)` — живой обратный отсчёт через edit_message_text |
+| `agent/react_loop.py` | ReactLoop.__init__: `bot=None`; run(): сохраняет `_chat_id`; перехват `sleep_seconds` → countdown когда bot+chat_id доступны |
+| `providers/favoriteapi.py` | reset_context(): вызывает `bootstrap()` после POST /api/v1/reset для синхронизации реального context_kb |
+| `bot/handlers/chat.py` | Оба ReactLoop() передают `bot=bot` для поддержки countdown |
+| `docs/FAVORITEAPI.md` | Добавлена полная документация FavoriteAPI (эндпоинты, токены, модели, memory-теги, reset-flow) |
+
+---
+
 ### ✅ Этап 5 — Аудит и починка импортов (Session #6, 2026-06-12)
 
 Полный аудит репозитория выявил 6 отсутствующих файлов/символов, блокирующих запуск:
@@ -100,8 +113,8 @@ Harold Conductor pattern — один «проводник» управляет 
 ## Известные баги / TODO
 - [ ] Referral blast: test_referral_blast.py — запустить реальный тест накрутки (код готов)
 - [x] ~~CB_STATS handler в RefAgent боте не реализован~~ — исправлено в Session #6
-- [ ] Rate limiter 20s/60s нет обратного отсчёта в UI
-- [ ] FavoriteAPI context_kb не обновляется в /api/v1/me после reset
+- [x] ~~Rate limiter 20s/60s нет обратного отсчёта в UI~~ — исправлено в Session #6 Task #3 (sleep_with_countdown)
+- [x] ~~FavoriteAPI context_kb не обновляется в /api/v1/me после reset~~ — исправлено в Session #6 Task #3 (bootstrap() после reset)
 
 ---
 
