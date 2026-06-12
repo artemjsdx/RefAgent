@@ -108,7 +108,11 @@ class FavoriteAPIProvider(BaseProvider):
     # ════════ RESET ════════
 
     async def reset_context(self) -> dict:
-        """Reset conversation context for this key. Call when CTX_LIMIT_180 hit."""
+        """Reset conversation context for this key. Call when CTX_LIMIT_180 hit.
+
+        After reset, calls /api/v1/me to sync the real context_kb from the server
+        instead of blindly setting 0.0 locally (avoids desync if reset fails silently).
+        """
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 self._base_url + FAVORITEAPI_RESET_PATH,
@@ -116,7 +120,13 @@ class FavoriteAPIProvider(BaseProvider):
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 data = await resp.json()
-        self._context_kb = 0.0
+
+        # Sync actual context_kb from server; fall back to 0.0 if bootstrap fails
+        try:
+            await self.bootstrap()
+        except Exception:
+            self._context_kb = 0.0
+
         return data
 
     # ════════ MODELS ════════
