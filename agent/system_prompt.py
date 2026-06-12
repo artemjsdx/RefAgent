@@ -2,11 +2,17 @@
 system_prompt.py — Сборка системного промпта для ReAct агента.
 
 Структура:
-  CRITICAL_RULES  — неизменные правила безопасности
+  CRITICAL_RULES  — неизменные правила безопасности (Session #6: +Rule #8)
   ROLE            — роль агента
   PLAN_SECTION    — текущий план (если есть)
   TOOLS_SECTION   — инструменты (только для FavoriteAPI)
   LIBRARY_HINT    — подсказка о базе знаний
+
+## Changelog
+- Session #6 (2026-06-12):
+  Rule #8 добавлен: Subscribe/Join/Channel URL-кнопки → get_inline_button_urls → join_channel.
+  Запрещает click_button для кнопок подписки (KeyboardButtonUrl не отправляет callback).
+  ROLE_DESCRIPTION: стандартная цепочка шаги 6-7 обновлены явным разделением URL vs callback кнопок.
 """
 
 from __future__ import annotations
