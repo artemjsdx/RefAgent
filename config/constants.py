@@ -14,6 +14,7 @@ DATA_DIR       = BASE_DIR / "data"
 SESSIONS_DIR   = DATA_DIR / "sessions"
 LIBRARY_DIR    = DATA_DIR / "library"
 SCRIPTS_DIR    = BASE_DIR / "scripts"
+UPLOADS_DIR    = DATA_DIR / "uploads"    # incoming .session / .zip files from Telegram
 CONFIG_FILE    = BASE_DIR / "config.json"
 SESSIONS_DB    = DATA_DIR / "sessions.db"
 RESULTS_DB     = DATA_DIR / "results.db"
