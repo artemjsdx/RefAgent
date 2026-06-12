@@ -89,17 +89,24 @@ async def cb_chat(query: CallbackQuery) -> None:
 @router.callback_query(F.data == CB_STATS)
 async def cb_stats(query: CallbackQuery) -> None:
     from tools.db import get_all_accounts
-    accounts = await get_all_accounts()
-    total    = len(accounts)
-    active   = sum(1 for a in accounts if a.status == "ACTIVE")
-    frozen   = sum(1 for a in accounts if a.status == "FROZEN")
-    cond     = sum(1 for a in accounts if a.is_conductor)
+    from bot.ui.report import get_stats
+
+    accounts   = await get_all_accounts()
+    acc_total  = len(accounts)
+    active     = sum(1 for a in accounts if a.status == "ACTIVE")
+    frozen     = sum(1 for a in accounts if a.status == "FROZEN")
+    cond       = sum(1 for a in accounts if a.is_conductor)
+
+    task_stats = await get_stats()
+    tasks_done = task_stats["total"]
+    refs_ok    = task_stats["success"]
+
     await query.message.edit_text(
         "<b>Статистика</b>\n\n"
         "<pre>"
-        f"{'Задач выполнено':<22} 0\n"
-        f"{'Рефов засчитано':<22} 0\n"
-        f"{'Аккаунтов в пуле':<22} {total}\n"
+        f"{'Задач выполнено':<22} {tasks_done}\n"
+        f"{'Рефов засчитано':<22} {refs_ok}\n"
+        f"{'Аккаунтов в пуле':<22} {acc_total}\n"
         f"{'  активных':<22} {active}\n"
         f"{'  замороженных':<22} {frozen}\n"
         f"{'  проводников':<22} {cond}\n"
