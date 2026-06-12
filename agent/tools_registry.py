@@ -295,31 +295,38 @@ TOOL_DEFS: list[dict[str, Any]] = [
             "required": ["steps", "description"],
         },
     },
-
       # ── Skills ───────────────────────────────────────────────────────────────
-      Tool(
-          name        = "search_skills",
-          description = (
+      {
+          "name": "search_skills",
+          "description": (
               "Искать навыки агента по теме. Навыки = инструкции/алгоритмы которые "
               "пользователь добавил для специфичных задач (боты, сценарии, обходы). "
               "Вызывай в начале задачи если не уверен в алгоритме. "
               "query: строка поиска, например 'ref cryptobot' или 'flood bypass'."
           ),
-          parameters  = {
+          "parameters": {
               "type": "object",
               "properties": {
                   "query": {"type": "string", "description": "Тема поиска: название бота, тип задачи, ошибка"},
               },
               "required": ["query"],
           },
-      ),
-      Tool(
-          name        = "use_skill",
-          description = (
+      },
+      {
+          "name": "use_skill",
+          "description": (
               "Загрузить workflow-навык и получить готовый план шагов для propose_plan. "
               "Используй когда search_skills нашёл подходящий workflow-навык."
           ),
-          parameters  = {
+          "parameters": {
+              "type": "object",
+              "properties": {
+                  "name": {"type": "string", "description": "Slug навыка (например: warmup_accounts)"},
+              },
+              "required": ["name"],
+          },
+      },
+            parameters  = {
               "type": "object",
               "properties": {
                   "name": {"type": "string", "description": "Slug навыка (например: warmup_accounts)"},

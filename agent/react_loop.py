@@ -271,7 +271,7 @@ class ReactLoop:
         self._chat_id:       Optional[int] = None
         self._executor       = ToolExecutor()
         self._history:       list[Message] = []
-        self._is_favoriteapi = isinstance(provider, FavoriteAPIProvider)
+        self._is_favoriteapi = isinstance(provider, FavoriteAPIProvider) or getattr(provider, "uses_text_tools", False)
 
     @property
     def stop_event(self) -> asyncio.Event:
