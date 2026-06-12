@@ -5,6 +5,7 @@ start.py — /start хендлер и навигация главного мен
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
 
 from bot.keyboards.main_menu import (
     main_menu_keyboard, back_to_main_keyboard,
@@ -24,9 +25,9 @@ WELCOME_TEXT = (
     "Автономный агент для реферальных программ Telegram.\n\n"
     "<b>Быстрый старт:</b>\n"
     "  1️⃣  <b>➕ Новый чат</b> — введи название, выбери провайдер и API ключ\n"
-    "  2️⃣  <b>🗄️ Сессии</b> — загрузи .zip с аккаунтами\n"
+    "  2️⃣  Открой чат и кинь <b>.zip</b> с сессиями — они привяжутся к нему\n"
     "  3️⃣  Напиши задачу — агент составит план и спросит подтверждение\n\n"
-    "<i>Каждый чат хранит свой API ключ — безопасно для open source.</i>"
+    "<i>Каждый чат — отдельная песочница с API ключом и своими аккаунтами.</i>"
 )
 
 
@@ -54,26 +55,54 @@ async def cb_back_main(query: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == CB_STATS)
-async def cb_stats(query: CallbackQuery) -> None:
-    from tools.db import get_all_accounts
+async def cb_stats(query: CallbackQuery, state: FSMContext) -> None:
+    from tools.db import get_accounts_for_chat, get_all_accounts
+    from tools.chat_db import get_chat
     from bot.ui.report import get_stats
 
-    accounts   = await get_all_accounts()
-    acc_total  = len(accounts)
-    active     = sum(1 for a in accounts if a.status == "ACTIVE")
-    frozen     = sum(1 for a in accounts if a.status == "FROZEN")
-    cond       = sum(1 for a in accounts if a.is_conductor)
     task_stats = await get_stats()
 
+    # Определить активный чат
+    fsm_data       = await state.get_data()
+    active_chat_id = fsm_data.get("active_chat_id")
+    chat_name      = None
+
+    if active_chat_id:
+        chat_rec  = await get_chat(active_chat_id)
+        chat_name = chat_rec.name if chat_rec else None
+        accounts  = await get_accounts_for_chat(active_chat_id)
+    else:
+        accounts = []
+
+    acc_total = len(accounts)
+    active    = sum(1 for a in accounts if a.status == "ACTIVE")
+    frozen    = sum(1 for a in accounts if a.status == "FROZEN")
+    cond      = sum(1 for a in accounts if a.is_conductor)
+
+    # Строка с текущим чатом
+    if chat_name:
+        chat_line = f"Чат: <b>{chat_name}</b>\n\n"
+    else:
+        chat_line = "<i>Чат не выбран — открой чат для статистики аккаунтов.</i>\n\n"
+
+    # Аккаунты — только если чат выбран
+    if active_chat_id:
+        acc_block = (
+            f"{'Аккаунтов в чате':<22} {acc_total}\n"
+            f"  {'активных':<20} {active}\n"
+            f"  {'замороженных':<20} {frozen}\n"
+            f"  {'проводников':<20} {cond}\n"
+        )
+    else:
+        acc_block = ""
+
     await query.message.edit_text(
-        "📊 <b>Статистика</b>\n\n"
+        f"📊 <b>Статистика</b>\n\n"
+        f"{chat_line}"
         "<pre>"
         f"{'Задач выполнено':<22} {task_stats['total']}\n"
         f"{'Рефов засчитано':<22} {task_stats['success']}\n"
-        f"{'Аккаунтов в пуле':<22} {acc_total}\n"
-        f"  {'активных':<20} {active}\n"
-        f"  {'замороженных':<20} {frozen}\n"
-        f"  {'проводников':<20} {cond}\n"
+        f"{acc_block}"
         "</pre>",
         parse_mode   = "HTML",
         reply_markup = back_to_main_keyboard(),
