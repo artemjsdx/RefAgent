@@ -81,17 +81,17 @@ async def init_db() -> None:
         except Exception:
             pass  # колонка уже есть
     # ── Skills stats (source of truth = data/skills/*.md) ──────────────────
-      await db.execute("""
-          CREATE TABLE IF NOT EXISTS skill_stats (
-              name       TEXT PRIMARY KEY,
-              used_count INTEGER NOT NULL DEFAULT 0,
-              last_used  TEXT
-          )
-      """)
-          await db.commit()
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS skill_stats (
+            name       TEXT PRIMARY KEY,
+            used_count INTEGER NOT NULL DEFAULT 0,
+            last_used  TEXT
+        )
+    """)
+    await db.commit()
 
 
-  async def session_path_exists(session_path: str) -> bool:
+async def session_path_exists(session_path: str) -> bool:
     """Проверить, загружена ли уже сессия с таким путём."""
     async with aiosqlite.connect(SESSIONS_DB) as db:
         async with db.execute(
