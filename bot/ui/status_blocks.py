@@ -71,7 +71,7 @@ async def send_step(bot: Bot, chat_id: int, n: int, total: int, desc: str = "") 
 
 
 async def send_wait(bot: Bot, chat_id: int, seconds: int, reason: str = "") -> int:
-    """Пауза между действиями (rate limiter)."""
+    """Пауза между действиями (rate limiter) — статичное сообщение."""
     reason_text = f" ({reason})" if reason else ""
     msg = await bot.send_message(
         chat_id,
@@ -79,6 +79,63 @@ async def send_wait(bot: Bot, chat_id: int, seconds: int, reason: str = "") -> i
         parse_mode="HTML",
     )
     return msg.message_id
+
+
+async def sleep_with_countdown(
+    bot:     Bot,
+    chat_id: int,
+    seconds: int,
+    reason:  str = "",
+) -> None:
+    """
+    Ждать `seconds` секунд с живым обратным отсчётом в Telegram.
+
+    Отправляет одно сообщение и редактирует его каждую секунду:
+      ⏱ Пауза 20с (между аккаунтами)
+      ⏱ Пауза 19с (между аккаунтами)
+      ...
+      ✅ Пауза завершена
+    """
+    import asyncio
+
+    if seconds <= 0:
+        return
+
+    reason_text = f" ({reason})" if reason else ""
+
+    try:
+        msg = await bot.send_message(
+            chat_id,
+            f"⏱ <b>Пауза {seconds}с{reason_text}</b>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        # Если сообщение не отправилось — просто спим без UI
+        await asyncio.sleep(seconds)
+        return
+
+    for remaining in range(seconds - 1, 0, -1):
+        await asyncio.sleep(1)
+        try:
+            await bot.edit_message_text(
+                chat_id    = chat_id,
+                message_id = msg.message_id,
+                text       = f"⏱ <b>Пауза {remaining}с{reason_text}</b>",
+                parse_mode = "HTML",
+            )
+        except Exception:
+            pass  # edit_message_text может упасть на Flood limit — игнорируем
+
+    await asyncio.sleep(1)
+    try:
+        await bot.edit_message_text(
+            chat_id    = chat_id,
+            message_id = msg.message_id,
+            text       = f"✅ Пауза завершена{reason_text}",
+            parse_mode = "HTML",
+        )
+    except Exception:
+        pass
 
 
 async def send_retry(bot: Bot, chat_id: int, attempt: int, reason: str = "") -> int:
