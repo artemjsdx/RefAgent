@@ -1,13 +1,16 @@
 """
-chat.py — Обработчики чата с агентом RefAgent.
+chat.py — Обработчики чата с агентом.
 
-Режимы:
-  DIALOG   — свободный диалог, агент собирает информацию о задаче
-  PLAN     — показ плана пользователю [Запустить / Изменить / Отмена]
-  RUNNING  — агент выполняет задачу (кнопки Остановить / Стоп+написать)
-  STOPPED  — задача остановлена
+FSM состояния:
+  dialog       — свободный диалог, ждём задачу
+  awaiting_run — план показан, ждём [Запустить]
+  running      — агент выполняет задачу
+  stopped      — задача остановлена
 
-Для FSM используется MemoryStorage из Dispatcher.
+Reply keyboard меняется вместе с состоянием:
+  dialog/stopped  → idle_keyboard()
+  awaiting_run    → plan_keyboard()
+  running         → running_keyboard()
 """
 
 from __future__ import annotations
@@ -23,13 +26,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from bot.keyboards.main_menu import (
-    CB_CHAT, CB_BACK_MAIN,
     CB_STOP, CB_STOP_WRITE,
     CB_PLAN_RUN, CB_PLAN_EDIT, CB_PLAN_CANCEL,
     plan_confirm_keyboard, task_controls_keyboard, back_to_main_keyboard,
 )
+from bot.keyboards.reply_keyboard import (
+    idle_keyboard, running_keyboard, plan_keyboard,
+)
 from bot.ui.animator import Animator
 from bot.ui.status_blocks import send_log, send_error
+from bot.file_buffer import pop_files, has_files
 from agent.react_loop import ReactLoop
 from agent.plan_manager import plan_manager
 from agent.state import agent_state
@@ -49,117 +55,130 @@ def set_animator(a: Animator) -> None:
     _animator = a
 
 
+# Геттеры для reply_handler (доступ к приватным переменным)
+def _get_loop():    return _loop
+def _get_task():    return _task
+def _stop_loop():
+    if _loop:
+        _loop.stop()
+
+
 # ════════════════════════════════════════════════════
 # FSM СОСТОЯНИЯ
 # ════════════════════════════════════════════════════
 
 class ChatStates(StatesGroup):
-    dialog       = State()   # свободный диалог
-    awaiting_run = State()   # план показан, ждём [Запустить]
-    running      = State()   # агент работает
-    stopped      = State()   # задача остановлена, ждём следующего
+    dialog       = State()
+    awaiting_run = State()
+    running      = State()
+    stopped      = State()
 
 
 # ════════════════════════════════════════════════════
-# ВХОД В ЧАТ
-# ════════════════════════════════════════════════════
-
-@router.callback_query(F.data == CB_CHAT)
-async def cb_open_chat(query: CallbackQuery, state: FSMContext) -> None:
-    if agent_state.is_active:
-        await query.message.edit_text(
-            "<b>Агент работает</b>\n\n"
-            "Задача сейчас выполняется. Используй кнопки управления.",
-            parse_mode   = "HTML",
-            reply_markup = task_controls_keyboard(),
-        )
-        await query.answer()
-        return
-
-    await state.set_state(ChatStates.dialog)
-    await query.message.edit_text(
-        "<b>Чат с агентом</b>\n\n"
-        "Напиши задачу. Например:\n"
-        "<i>Нужно зарефериться по ссылке t.me/somebot?start=abc123\n"
-        "Жмём кнопку «Получить бонус» после старта.\n"
-        "Есть 5 аккаунтов.</i>\n\n"
-        "Агент уточнит детали и предложит план.",
-        parse_mode   = "HTML",
-        reply_markup = back_to_main_keyboard(),
-    )
-    await query.answer()
-
-
-# ════════════════════════════════════════════════════
-# СВОБОДНЫЙ ДИАЛОГ (DIALOG STATE)
+# СВОБОДНЫЙ ДИАЛОГ
 # ════════════════════════════════════════════════════
 
 @router.message(ChatStates.dialog)
 async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -> None:
-    """Пользователь пишет задачу — запускаем одну итерацию диалогового агента."""
     settings = get_settings()
     try:
         provider = build_provider(settings)
     except ValueError as e:
         await message.reply(
             f"⚠️ Провайдер не настроен: {e}\n\n"
-            "Перейди в <b>Настройки → LLM Провайдер</b> и укажи API ключ.",
-            parse_mode="HTML",
+            "Перейди в <b>⚙️ Настройки → 🔑 API Ключи</b>.",
+            parse_mode   = "HTML",
+            reply_markup = idle_keyboard(),
         )
         return
 
-    anim_msg_id = None
     chat_id     = message.chat.id
+    anim_msg_id = None
 
+    # Собрать прикреплённые файлы и очистить буфер
+    pending = pop_files(chat_id)
+    user_text = message.text or ""
+    if pending:
+        attachment_lines = "\n".join(f.context_line() for f in pending)
+        user_text = f"{user_text}\n\n{attachment_lines}" if user_text else attachment_lines
+
+    # Mutable animation state — shared between log_cb and outer scope
+    anim = {"msg_id": None}
     if _animator:
-        anim_msg_id = await _animator.start(chat_id, "thinking")
+        anim["msg_id"] = await _animator.start(chat_id, "thinking")
+
+    from agent.status_event import StatusEvent
+    from agent.status_event import KIND_THOUGHT as _KIND_THOUGHT
+
+    async def _dialog_log_cb(event: StatusEvent) -> None:
+        if event.kind != _KIND_THOUGHT:
+            return
+        raw = event.data.get("text", "").strip()
+        if not raw:
+            return
+        # Stop & delete current animation block
+        if _animator and anim["msg_id"]:
+            await _animator.stop_only(anim["msg_id"])
+            try:
+                await bot.delete_message(chat_id, anim["msg_id"])
+            except Exception:
+                pass
+            anim["msg_id"] = None
+        # Send thought as a standalone message
+        await bot.send_message(chat_id, raw[:500])
+        # Immediately start a new animation block
+        if _animator:
+            anim["msg_id"] = await _animator.start(chat_id, "thinking")
 
     try:
-        react = ReactLoop(provider=provider)
-
-        # Запустить одну итерацию для ответа
+        react  = ReactLoop(provider=provider, log_cb=_dialog_log_cb)
         result = await react.run(
             chat_id      = chat_id,
-            user_message = message.text or "",
+            user_message = user_text,
         )
 
-        # Если агент предложил план — переключить режим
         if result.startswith("__plan_proposed__"):
-            plan_data_str = result[len("__plan_proposed__"):]
-            plan_data     = json.loads(plan_data_str) if plan_data_str else {}
-            plan_text     = plan_data.get("plan_text", "")
+            plan_data = json.loads(result[len("__plan_proposed__"):] or "{}")
+            plan_text = plan_data.get("plan_text", "")
 
-            if anim_msg_id:
-                await _animator.stop_only(anim_msg_id)
-                await bot.delete_message(chat_id, anim_msg_id)
+            if _animator and anim["msg_id"]:
+                await _animator.stop_only(anim["msg_id"])
+                try:
+                    await bot.delete_message(chat_id, anim["msg_id"])
+                except Exception:
+                    pass
+                anim["msg_id"] = None
 
             await state.set_state(ChatStates.awaiting_run)
             await message.answer(
                 plan_text + "\n\n<i>Подтверди план для запуска.</i>",
                 parse_mode   = "HTML",
+                reply_markup = plan_keyboard(),
+            )
+            await message.answer(
+                "Запустить план?",
                 reply_markup = plan_confirm_keyboard(),
             )
         else:
-            if _animator and anim_msg_id:
-                await _animator.finalize(chat_id, anim_msg_id, result)
+            if _animator and anim["msg_id"]:
+                await _animator.finalize(chat_id, anim["msg_id"], result)
             else:
-                await message.answer(result, parse_mode="HTML")
+                await message.answer(result, parse_mode="HTML", reply_markup=idle_keyboard())
 
     except Exception as e:
         log.exception(f"[Chat] Ошибка диалога: {e}")
-        if _animator and anim_msg_id:
-            await _animator.finalize(chat_id, anim_msg_id, f"❌ Ошибка: {e}")
+        if _animator and anim["msg_id"]:
+            await _animator.finalize(chat_id, anim["msg_id"], f"❌ Ошибка: {e}")
         else:
-            await message.reply(f"❌ Ошибка: {e}")
+            await message.reply(f"❌ Ошибка: {e}", reply_markup=idle_keyboard())
 
 
 # ════════════════════════════════════════════════════
-# ПОДТВЕРЖДЕНИЕ ПЛАНА
+# ПОДТВЕРЖДЕНИЕ ПЛАНА (inline кнопки)
 # ════════════════════════════════════════════════════
 
 @router.callback_query(F.data == CB_PLAN_RUN)
 async def cb_plan_run(query: CallbackQuery, state: FSMContext, bot: Bot) -> None:
-    """Пользователь нажал [Запустить] — запустить агента с планом."""
     if agent_state.is_active:
         await query.answer("Агент уже работает", show_alert=True)
         return
@@ -173,13 +192,14 @@ async def cb_plan_run(query: CallbackQuery, state: FSMContext, bot: Bot) -> None
     chat_id = query.message.chat.id
 
     await query.message.edit_text(
-        "🚀 <b>Задача запущена</b>\n\nСтатус будет обновляться...",
+        "🚀 <b>Задача запущена</b>\n\nСтатус обновляется...",
         parse_mode   = "HTML",
         reply_markup = task_controls_keyboard(),
     )
+    # Переключить reply kb на управление
+    await bot.send_message(chat_id, "⚙️ Агент работает...", reply_markup=running_keyboard())
     await query.answer()
 
-    # Запустить в фоне
     settings = get_settings()
     try:
         provider = build_provider(settings)
@@ -193,10 +213,9 @@ async def cb_plan_run(query: CallbackQuery, state: FSMContext, bot: Bot) -> None
 
 @router.callback_query(F.data == CB_PLAN_EDIT)
 async def cb_plan_edit(query: CallbackQuery, state: FSMContext) -> None:
-    """Пользователь хочет изменить план — вернуться в диалог."""
     await state.set_state(ChatStates.dialog)
     await query.message.edit_text(
-        "<b>Редактирование плана</b>\n\n"
+        "<b>✏️ Редактирование плана</b>\n\n"
         "Напиши что хочешь изменить — агент пересоставит план.",
         parse_mode   = "HTML",
         reply_markup = back_to_main_keyboard(),
@@ -206,80 +225,72 @@ async def cb_plan_edit(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == CB_PLAN_CANCEL)
 async def cb_plan_cancel(query: CallbackQuery, state: FSMContext) -> None:
-    """Отмена плана."""
     await plan_manager.cancel()
     await state.set_state(ChatStates.dialog)
     await query.message.edit_text(
-        "Задача отменена. Напиши новую задачу когда будешь готов.",
+        "Задача отменена.",
         reply_markup = back_to_main_keyboard(),
     )
     await query.answer("Отменено")
 
 
 # ════════════════════════════════════════════════════
-# УПРАВЛЕНИЕ ЗАДАЧЕЙ (RUNNING STATE)
+# УПРАВЛЕНИЕ ЗАДАЧЕЙ (inline кнопки — дублируют reply)
 # ════════════════════════════════════════════════════
 
 @router.callback_query(F.data == CB_STOP)
-async def cb_stop(query: CallbackQuery, state: FSMContext) -> None:
-    """Остановить агента."""
-    if _loop:
-        _loop.stop()
+async def cb_stop(query: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    _stop_loop()
     if _task and not _task.done():
         _task.cancel()
 
+    agent_state.set_active(False)
     await state.set_state(ChatStates.stopped)
     await query.message.edit_reply_markup(reply_markup=None)
-    await query.message.answer(
+    await bot.send_message(
+        query.message.chat.id,
         "🛑 <b>Остановлено.</b>",
         parse_mode   = "HTML",
-        reply_markup = back_to_main_keyboard(),
+        reply_markup = idle_keyboard(),
     )
     await query.answer("Останавливаю...")
 
 
 @router.callback_query(F.data == CB_STOP_WRITE)
-async def cb_stop_write(query: CallbackQuery, state: FSMContext) -> None:
-    """Остановить и перейти в диалог."""
-    if _loop:
-        _loop.stop()
+async def cb_stop_write(query: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    _stop_loop()
     if _task and not _task.done():
         _task.cancel()
 
+    agent_state.set_active(False)
     await state.set_state(ChatStates.dialog)
     await query.message.edit_reply_markup(reply_markup=None)
-    await query.message.answer(
-        "🛑 Остановлено. Напиши новую задачу или инструкции.",
+    await bot.send_message(
+        query.message.chat.id,
+        "🛑 Остановлено. Напиши новую задачу.",
         parse_mode   = "HTML",
-        reply_markup = back_to_main_keyboard(),
+        reply_markup = idle_keyboard(),
     )
     await query.answer()
 
 
 # ════════════════════════════════════════════════════
-# СООБЩЕНИЯ ВО ВРЕМЯ РАБОТЫ АГЕНТА
+# СООБЩЕНИЯ ПОКА АГЕНТ РАБОТАЕТ
 # ════════════════════════════════════════════════════
 
 @router.message(ChatStates.running)
 async def handle_running_message(message: Message) -> None:
-    """Пользователь написал пока агент работает."""
     await message.reply(
-        "Агент сейчас работает. Используй кнопки <b>Остановить</b> или <b>Стоп + написать</b>.",
-        parse_mode="HTML",
+        "⚙️ Агент сейчас работает.\nНажми <b>⛔ Остановить</b> под строкой ввода.",
+        parse_mode   = "HTML",
+        reply_markup = running_keyboard(),
     )
 
 
-# ════════════════════════════════════════════════════
-# СООБЩЕНИЯ В СОСТОЯНИИ STOPPED
-# ════════════════════════════════════════════════════
-
 @router.message(ChatStates.stopped)
-async def handle_stopped_message(message: Message, state: FSMContext) -> None:
-    """После остановки принимаем новые сообщения."""
+async def handle_stopped_message(message: Message, state: FSMContext, bot: Bot) -> None:
     await state.set_state(ChatStates.dialog)
-    # Переиспользовать dialog handler
-    from bot.handlers.chat import handle_dialog_message
-    await handle_dialog_message(message, state, message.bot)
+    await handle_dialog_message(message, state, bot)
 
 
 # ════════════════════════════════════════════════════
@@ -295,9 +306,56 @@ async def _start_agent_task(
 ) -> None:
     global _loop, _task
 
-    async def log_cb(text: str) -> None:
+    from agent.status_event import (
+        KIND_THINKING, KIND_THOUGHT, KIND_TOOL_CALL, KIND_TOOL_RESULT,
+        KIND_STEP, KIND_WAIT, KIND_RETRY, KIND_WARN, KIND_ERROR,
+        KIND_STOP, KIND_DONE, KIND_SEPARATOR, KIND_CONTEXT_RESET,
+    )
+    from bot.ui.status_blocks import (
+        send_thought, send_tool_call, send_tool_result,
+        send_step, send_wait, send_retry, send_warn, send_error,
+        send_separator, send_ok, send_account,
+    )
+    from agent.status_event import StatusEvent
+
+    # Shared animation state for running mode
+    run_anim = {"msg_id": None}
+
+    async def log_cb(event: StatusEvent) -> None:
+        k = event.kind
+        d = event.data
         try:
-            await send_log(bot, chat_id, text)
+            if k in (KIND_THINKING, KIND_TOOL_CALL, KIND_TOOL_RESULT, KIND_DONE):
+                pass  # silent
+            elif k == KIND_THOUGHT:
+                # Stop & delete animation → send thought → new animation
+                if _animator and run_anim["msg_id"]:
+                    await _animator.stop_only(run_anim["msg_id"])
+                    try:
+                        await bot.delete_message(chat_id, run_anim["msg_id"])
+                    except Exception:
+                        pass
+                    run_anim["msg_id"] = None
+                await send_thought(bot, chat_id, d.get("text", ""))
+                if _animator:
+                    run_anim["msg_id"] = await _animator.start(chat_id, "thinking")
+            elif k == KIND_STEP:
+                await send_step(bot, chat_id, d["n"], d["total"], d.get("desc", ""))
+            elif k == KIND_WAIT:
+                await send_wait(bot, chat_id, d.get("seconds", 0), d.get("reason", ""))
+            elif k == KIND_RETRY:
+                await send_retry(bot, chat_id, d.get("attempt", 1), d.get("reason", ""))
+            elif k in (KIND_WARN, KIND_CONTEXT_RESET):
+                text = d.get("text", "Context reset") if k == KIND_CONTEXT_RESET else d.get("text", "")
+                await send_warn(bot, chat_id, text)
+            elif k == KIND_ERROR:
+                await send_error(bot, chat_id, d.get("text", "Unknown error"))
+            elif k == KIND_STOP:
+                await send_log(bot, chat_id, "Stopped.")
+            elif k == KIND_SEPARATOR:
+                await send_separator(bot, chat_id)
+            elif k == "account":
+                await send_account(bot, chat_id, d.get("phone", "?"), d.get("status", ""))
         except Exception:
             pass
 
@@ -313,23 +371,52 @@ async def _start_agent_task(
     )
 
     async def _run() -> None:
+        # Start initial animation block for running mode
+        if _animator:
+            run_anim["msg_id"] = await _animator.start(chat_id, "thinking")
         try:
             result = await _loop.run(
                 chat_id      = chat_id,
                 user_message = user_msg,
                 plan_steps   = [s.description for s in plan.steps],
             )
-            # Показать финальный отчёт
+            # Stop animation before final report
+            if _animator and run_anim["msg_id"]:
+                await _animator.stop_only(run_anim["msg_id"])
+                try:
+                    await bot.delete_message(chat_id, run_anim["msg_id"])
+                except Exception:
+                    pass
+                run_anim["msg_id"] = None
             from bot.ui.report import send_final_report, save_task_result
             await send_final_report(bot, chat_id, result, plan)
             await save_task_result(plan, result)
         except asyncio.CancelledError:
-            pass
+            if _animator and run_anim["msg_id"]:
+                await _animator.stop_only(run_anim["msg_id"])
+                try:
+                    await bot.delete_message(chat_id, run_anim["msg_id"])
+                except Exception:
+                    pass
         except Exception as e:
+            if _animator and run_anim["msg_id"]:
+                await _animator.stop_only(run_anim["msg_id"])
+                try:
+                    await bot.delete_message(chat_id, run_anim["msg_id"])
+                except Exception:
+                    pass
             log.exception(f"[Chat] Ошибка агента: {e}")
             await send_error(bot, chat_id, str(e))
         finally:
-            await state.set_state(ChatStates.dialog)
             agent_state.set_active(False)
+            await state.set_state(ChatStates.dialog)
+            try:
+                await bot.send_message(
+                    chat_id,
+                    "✅ Задача завершена.",
+                    reply_markup = idle_keyboard(),
+                )
+            except Exception:
+                pass
 
     _task = asyncio.create_task(_run())
