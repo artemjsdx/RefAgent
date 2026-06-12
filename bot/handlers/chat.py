@@ -131,7 +131,7 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
             anim["msg_id"] = await _animator.start(chat_id, "thinking")
 
     try:
-        react  = ReactLoop(provider=provider, log_cb=_dialog_log_cb)
+        react  = ReactLoop(provider=provider, log_cb=_dialog_log_cb, bot=bot)
         result = await react.run(
             chat_id      = chat_id,
             user_message = user_text,
@@ -359,7 +359,7 @@ async def _start_agent_task(
         except Exception:
             pass
 
-    _loop = ReactLoop(provider=provider, log_cb=log_cb)
+    _loop = ReactLoop(provider=provider, log_cb=log_cb, bot=bot)
 
     plan_text_for_llm = "\n".join(
         f"{i+1}. {s.description}" for i, s in enumerate(plan.steps)
