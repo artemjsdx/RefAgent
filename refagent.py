@@ -109,6 +109,7 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     from bot.handlers.chat          import router as chat_router, set_animator as set_chat_animator
     from bot.handlers.new_chat      import router as new_chat_router
     from bot.handlers.chat_list     import router as chat_list_router
+    from bot.handlers.skills        import router as skills_router
 
     animator = Animator(bot)
     set_sessions_animator(animator)
@@ -120,6 +121,7 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     # 3. sessions, chat, settings — основная логика
     # 4. start — последним (catch-all для CB_BACK_MAIN и навигации)
     dp.include_router(reply_router)
+    dp.include_router(skills_router)
     dp.include_router(new_chat_router)
     dp.include_router(chat_list_router)
     dp.include_router(sessions_router)

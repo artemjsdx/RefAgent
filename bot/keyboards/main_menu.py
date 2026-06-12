@@ -17,6 +17,7 @@ CB_SETTINGS   = "menu:settings"
 CB_STATS      = "menu:stats"
 CB_ABOUT      = "menu:about"
 CB_BACK_MAIN  = "menu:back_main"
+CB_SKILLS     = "menu:skills"
 
 CB_SETTINGS_PROVIDER = "settings:provider"
 CB_SETTINGS_MODEL    = "settings:model"

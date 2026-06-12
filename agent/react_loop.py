@@ -7,6 +7,15 @@ layer can pick the right status_block for each action.
 
 from __future__ import annotations
 
+from tools.skills_db import (
+    search_skills as _skills_search,
+    get_skill as _get_skill,
+    parse_workflow_steps,
+    get_active_knowledge_skills,
+    format_skill_for_agent,
+    increment_used as _inc_skill,
+)
+
 import asyncio
 import json
 import logging
@@ -418,7 +427,62 @@ class ReactLoop:
                     await self._emit(KIND_TOOL_RESULT, tool=tool_name, result_preview=result_preview)
 
                     # Special: propose_plan → pause for user confirmation
-                    if tool_name == "propose_plan":
+
+                    # ── Skills tools ──────────────────────────────────────────────────────
+  
+                    if tool_name == "search_skills":
+  
+                        query   = tool_args.get("query", "")
+  
+                        results = _skills_search(query, limit=4)
+  
+                        if not results:
+  
+                            tool_result = f"Навыки по теме '{query}' не найдены."
+  
+                        else:
+  
+                            parts = []
+  
+                            for s in results:
+  
+                                icon = "⚡" if s.skill_type == "workflow" else "📖"
+  
+                                parts.append(f"{icon} [{s.name}] {s.title}\n{s.content[:500]}")
+  
+                            tool_result = "\n\n---\n".join(parts)
+
+  
+                    elif tool_name == "use_skill":
+  
+                        skill_name = tool_args.get("name", "")
+  
+                        skill      = _get_skill(skill_name)
+  
+                        if not skill:
+  
+                            tool_result = f"Навык '{skill_name}' не найден."
+  
+                        elif skill.skill_type != "workflow":
+  
+                            tool_result = f"Навык '{skill_name}' — knowledge-тип, используй как инструкцию а не plan."
+  
+                        else:
+  
+                            steps = parse_workflow_steps(skill)
+  
+                            await _inc_skill(skill_name)
+  
+                            tool_result = (
+  
+                                f"Навык '{skill.title}' загружен. Используй шаги в propose_plan:\n"
+  
+                                + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))
+  
+                            )
+
+  
+                    elif tool_name == "propose_plan":
                         return f"__plan_proposed__{obs}"
 
                     # Special: emit typed events for known tools

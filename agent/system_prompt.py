@@ -103,11 +103,11 @@ ROLE_DESCRIPTION = """## Роль
 # BUILD FUNCTIONS
 # ════════════════════════════════════════════════════
 
-def build_system_prompt(
-    provider:       str                 = "openrouter",   # "openrouter" | "favoriteapi"
+def build_system_prompt(provider:       str                 = "openrouter",   # "openrouter" | "favoriteapi"
     plan_steps:     Optional[list[str]] = None,
     library_hint:   Optional[str]       = None,
-    extra_context:  Optional[str]       = None,
+    extra_context:  Optional[str]       = None,,
+    skills_context: str = "",
 ) -> str:
     """
     Собрать полный системный промпт.
