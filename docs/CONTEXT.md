@@ -1,5 +1,5 @@
 # CONTEXT.md — RefAgent Project State
-_Last updated: Session #5 (2026-06-11)_
+_Last updated: Session #6 (2026-06-12)_
 
 ## Что такое RefAgent
 Telegram-бот на Python (aiogram 3) + ReAct-агент (Telethon) для автоматизации реферальных задач.
@@ -57,6 +57,40 @@ Harold Conductor pattern — один «проводник» управляет 
 
 ---
 
+### ✅ Этап 5 — Аудит и починка импортов (Session #6, 2026-06-12)
+
+Полный аудит репозитория выявил 6 отсутствующих файлов/символов, блокирующих запуск:
+
+#### Созданные файлы
+| Файл | Описание |
+|------|----------|
+| `bot/keyboards/reply_keyboard.py` | Reply-клавиатуры: idle / running / plan с русскими кнопками |
+| `bot/handlers/reply_handler.py` | aiogram3 router перехвата reply-кнопок (lazy import из chat.py) |
+| `bot/file_buffer.py` | In-memory буфер вложений: push_file / pop_files / has_files, FileAttachment.context_line() |
+| `agent/status_event.py` | KIND_* константы + StatusEvent dataclass + StatusCallback type alias |
+
+#### Обновлённые файлы
+| Файл | Изменение |
+|------|-----------|
+| `bot/ui/status_blocks.py` | +9 функций: send_thought, send_tool_call, send_tool_result, send_step, send_wait, send_retry, send_warn, send_separator, send_ok, send_account |
+| `config/constants.py` | +UPLOADS_DIR = DATA_DIR / "uploads" |
+| `bot/handlers/sessions.py` | handle_document: не-.session/.zip файлы → push_file() (producer path) |
+| `bot/handlers/start.py` | CB_STATS: get_stats() из report.py вместо hardcoded 0 |
+| `agent/system_prompt.py` | +Правило #8: Subscribe-кнопки → get_inline_button_urls → join_channel; обновлена цепочка в ROLE_DESCRIPTION шаги 6-7 |
+
+#### Полная цепочка file_buffer
+```
+Пользователь отправляет файл
+  → sessions.py handle_document (не .session/.zip)
+  → push_file(chat_id, FileAttachment)
+  → пользователь пишет задачу
+  → chat.py handle_dialog_message
+  → pop_files(chat_id) → context_line() вставляется в user_message
+  → ReactLoop.run(user_message=...) — агент видит файл в контексте
+```
+
+---
+
 ## Работающие боты (Replit Workflows)
 - **@TestAIReZero_bot** — RefAgent Bot (provider: openrouter, model: openai/gpt-oss-20b:free)
 - **@RefTestRef8483_bot** — RefTest Target Bot (минное поле для тестов)
@@ -64,8 +98,8 @@ Harold Conductor pattern — один «проводник» управляет 
 ---
 
 ## Известные баги / TODO
-- [ ] Referral blast: ImportChatInviteRequest — проверить работу (v2 запускается)
-- [ ] CB_STATS handler в RefAgent боте не реализован
+- [ ] Referral blast: test_referral_blast.py — запустить реальный тест накрутки (код готов)
+- [x] ~~CB_STATS handler в RefAgent боте не реализован~~ — исправлено в Session #6
 - [ ] Rate limiter 20s/60s нет обратного отсчёта в UI
 - [ ] FavoriteAPI context_kb не обновляется в /api/v1/me после reset
 
@@ -80,14 +114,37 @@ RefAgent/
 ├── .env.example             — шаблон .env
 ├── README-TERMUX.md         — инструкция для Termux
 ├── config/
-│   ├── constants.py
+│   ├── constants.py         — UPLOADS_DIR добавлен
 │   ├── settings.py
 │   ├── config.json          — {active_provider, active_model}
 │   └── accounts.json        — аккаунты по ролям
-├── agent/                   — ReAct loop, prompts, tools registry
+├── agent/
+│   ├── react_loop.py
+│   ├── plan_manager.py
+│   ├── system_prompt.py     — +Правило #8 (Subscribe → join_channel)
+│   ├── status_event.py      — НОВЫЙ: KIND_* + StatusEvent + StatusCallback
+│   ├── state.py
+│   ├── context_manager.py
+│   └── tools_registry.py
 ├── providers/               — openrouter, bai, favoriteapi
-├── tools/                   — tg_tools, conductor, library, terminal
-├── bot/                     — aiogram handlers, keyboards, UI
+├── tools/                   — tg_tools, conductor, library, terminal, session_tools
+├── bot/
+│   ├── handlers/
+│   │   ├── reply_handler.py — НОВЫЙ: перехват reply-кнопок
+│   │   ├── chat.py          — FSM диалога с агентом
+│   │   ├── sessions.py      — +push_file для нессионных файлов
+│   │   ├── settings_menu.py
+│   │   └── start.py         — CB_STATS подключён к get_stats()
+│   ├── keyboards/
+│   │   ├── reply_keyboard.py — НОВЫЙ: idle/running/plan клавиатуры
+│   │   ├── main_menu.py
+│   │   ├── session_menu.py
+│   │   └── model_browser.py
+│   ├── ui/
+│   │   ├── status_blocks.py — +9 функций статуса агента
+│   │   ├── animator.py
+│   │   └── report.py
+│   └── file_buffer.py       — НОВЫЙ: буфер вложений
 ├── target_bot/              — @RefTestRef8483_bot (минное поле)
 ├── tests/
 │   ├── test_providers.py    — L1/L2/L3 тесты всех провайдеров
