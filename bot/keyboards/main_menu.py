@@ -39,7 +39,6 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="➕ Новый чат",   callback_data=CB_NEW_CHAT),
             InlineKeyboardButton(text="💬 Мои чаты",    callback_data=CB_CHAT_LIST),
         ],
-        [InlineKeyboardButton(text="🗄️ Сессии",         callback_data=CB_SESSIONS)],
         [
             InlineKeyboardButton(text="📊 Статистика",  callback_data=CB_STATS),
             InlineKeyboardButton(text="ℹ️ О проекте",   callback_data=CB_ABOUT),
