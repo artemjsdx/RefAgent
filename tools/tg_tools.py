@@ -227,6 +227,7 @@ async def send_message(account_id: int, peer: str, text: str) -> dict:
 async def get_messages(account_id: int, peer: str, limit: int = 5) -> dict:
     """Получить последние сообщения из диалога."""
     try:
+        from telethon.tl.types import KeyboardButtonUrl
         client   = await _get_client(account_id)
         entity   = await client.get_entity(peer)
         messages = await client.get_messages(entity, limit=limit)
@@ -240,12 +241,56 @@ async def get_messages(account_id: int, peer: str, limit: int = 5) -> dict:
                 "buttons": [],
             }
             if m.buttons:
-                entry["buttons"] = [
-                    [btn.text for btn in row]
-                    for row in m.buttons
-                ]
+                rows = []
+                for row in m.buttons:
+                    r = []
+                    for btn in row:
+                        b: dict = {"text": btn.text}
+                        raw = getattr(btn, "button", None)
+                        if isinstance(raw, KeyboardButtonUrl):
+                            b["url"] = raw.url
+                        r.append(b)
+                    rows.append(r)
+                entry["buttons"] = rows
             result.append(entry)
         return {"ok": True, "messages": result}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def get_inline_button_urls(
+    account_id: int,
+    peer:       str,
+    message_id: int,
+) -> dict:
+    """
+    Вернуть список URL-кнопок из сообщения (KeyboardButtonUrl).
+    Используй для извлечения ссылок на каналы перед join_channel.
+    """
+    try:
+        from telethon.tl.types import KeyboardButtonUrl, KeyboardButtonCallback
+        client  = await _get_client(account_id)
+        entity  = await client.get_entity(peer)
+        message = await client.get_messages(entity, ids=message_id)
+
+        if not message or not message.buttons:
+            return {"ok": False, "error": "Сообщение не найдено или нет кнопок"}
+
+        url_buttons      = []
+        callback_buttons = []
+        for row in message.buttons:
+            for btn in row:
+                raw = getattr(btn, "button", None)
+                if isinstance(raw, KeyboardButtonUrl):
+                    url_buttons.append({"text": btn.text, "url": raw.url})
+                elif isinstance(raw, KeyboardButtonCallback):
+                    callback_buttons.append({"text": btn.text})
+
+        return {
+            "ok":               True,
+            "url_buttons":      url_buttons,
+            "callback_buttons": callback_buttons,
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

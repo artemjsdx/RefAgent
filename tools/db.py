@@ -55,9 +55,6 @@ CREATE TABLE IF NOT EXISTS accounts (
     added_at     TEXT    NOT NULL DEFAULT (datetime('now')),
     last_used    TEXT
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_api_id
-    ON accounts(api_id);
 """
 
 
@@ -69,8 +66,30 @@ async def init_db() -> None:
     """Создать таблицы при первом запуске. Безопасно вызывать повторно."""
     SESSIONS_DB.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(SESSIONS_DB) as db:
+        # WAL режим: параллельные читатели не блокируют писателя
+        await db.execute("PRAGMA journal_mode=WAL;")
+        # Ждать до 5с вместо немедленного SQLITE_BUSY
+        await db.execute("PRAGMA busy_timeout=5000;")
         await db.executescript(SCHEMA)
         await db.commit()
+
+
+async def session_path_exists(session_path: str) -> bool:
+    """Проверить, загружена ли уже сессия с таким путём."""
+    async with aiosqlite.connect(SESSIONS_DB) as db:
+        async with db.execute(
+            "SELECT 1 FROM accounts WHERE session_path = ?", (session_path,)
+        ) as cur:
+            return await cur.fetchone() is not None
+
+
+async def phone_exists(phone: str) -> bool:
+    """Проверить, есть ли уже аккаунт с таким телефоном."""
+    async with aiosqlite.connect(SESSIONS_DB) as db:
+        async with db.execute(
+            "SELECT 1 FROM accounts WHERE phone = ?", (phone,)
+        ) as cur:
+            return await cur.fetchone() is not None
 
 
 # ════════════════════════════════════════════════════
@@ -83,41 +102,30 @@ class DuplicateApiIdError(Exception):
 
 
 async def add_account(rec: AccountRecord) -> int:
-    """
-    Добавить аккаунт в БД. Возвращает id новой записи.
-    Бросает DuplicateApiIdError если api_id уже занят.
-    """
+    """Добавить аккаунт в БД. Возвращает id новой записи."""
     async with aiosqlite.connect(SESSIONS_DB) as db:
-        try:
-            cursor = await db.execute(
-                """
-                INSERT INTO accounts
-                    (phone, uid, api_id, api_hash, format, status, uid_category,
-                     is_conductor, session_path, added_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    rec.phone,
-                    rec.uid,
-                    rec.api_id,
-                    rec.api_hash,
-                    rec.format,
-                    rec.status,
-                    rec.uid_category,
-                    int(rec.is_conductor),
-                    rec.session_path,
-                    datetime.now().isoformat(sep=" ", timespec="seconds"),
-                ),
-            )
-            await db.commit()
-            return cursor.lastrowid
-        except aiosqlite.IntegrityError as e:
-            if "idx_api_id" in str(e) or "UNIQUE" in str(e):
-                raise DuplicateApiIdError(
-                    f"api_id {rec.api_id} уже используется другим аккаунтом. "
-                    f"Использование одного api_id для нескольких аккаунтов ведёт к массовой заморозке!"
-                ) from e
-            raise
+        cursor = await db.execute(
+            """
+            INSERT INTO accounts
+                (phone, uid, api_id, api_hash, format, status, uid_category,
+                 is_conductor, session_path, added_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rec.phone,
+                rec.uid,
+                rec.api_id,
+                rec.api_hash,
+                rec.format,
+                rec.status,
+                rec.uid_category,
+                int(rec.is_conductor),
+                rec.session_path,
+                datetime.now().isoformat(sep=" ", timespec="seconds"),
+            ),
+        )
+        await db.commit()
+        return cursor.lastrowid
 
 
 # ════════════════════════════════════════════════════
@@ -207,6 +215,33 @@ async def delete_account(account_id: int) -> None:
     async with aiosqlite.connect(SESSIONS_DB) as db:
         await db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
         await db.commit()
+
+
+# ════════════════════════════════════════════════════
+# СТАТИСТИКА ЗАДАЧ
+# ════════════════════════════════════════════════════
+
+async def get_task_stats() -> dict:
+    """
+    Вернуть агрегированную статистику по задачам из results.db.
+    Безопасно если таблица ещё не создана — возвращает нули.
+    """
+    from config.constants import RESULTS_DB
+    if not RESULTS_DB.exists():
+        return {"tasks_done": 0, "refs_total": 0}
+    try:
+        async with aiosqlite.connect(RESULTS_DB) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM task_results"
+            ) as cur:
+                tasks_done = (await cur.fetchone())[0]
+            async with db.execute(
+                "SELECT COALESCE(SUM(refs_credited), 0) FROM task_results"
+            ) as cur:
+                refs_total = (await cur.fetchone())[0]
+        return {"tasks_done": tasks_done, "refs_total": refs_total}
+    except Exception:
+        return {"tasks_done": 0, "refs_total": 0}
 
 
 # ════════════════════════════════════════════════════

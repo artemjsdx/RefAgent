@@ -186,6 +186,36 @@ TOOL_DEFS: list[dict[str, Any]] = [
         },
     },
 
+    # ── Утилиты ─────────────────────────────────────────────────────────
+    {
+        "name": "sleep_seconds",
+        "description": "Подождать N секунд. Используй вместо run_temp_script(time.sleep(n)).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "seconds": {"type": "integer", "description": "Количество секунд ожидания"},
+            },
+            "required": ["seconds"],
+        },
+    },
+    {
+        "name": "get_inline_button_urls",
+        "description": (
+            "Вернуть URL-кнопки из сообщения бота (тип KeyboardButtonUrl). "
+            "Используй чтобы получить ссылки на каналы для подписки — "
+            "затем вызывай join_channel для каждого url из url_buttons."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "account_id": {"type": "integer"},
+                "peer":       {"type": "string", "description": "Username бота"},
+                "message_id": {"type": "integer"},
+            },
+            "required": ["account_id", "peer", "message_id"],
+        },
+    },
+
     # ── Терминал ────────────────────────────────────────────────────────
     {
         "name": "execute_command",
@@ -209,6 +239,23 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 "timeout":  {"type": "integer", "default": 60},
             },
             "required": ["code"],
+        },
+    },
+
+    # ── Инструменты аккаунтов ────────────────────────────────────────────
+    {
+        "name": "list_accounts",
+        "description": (
+            "Вернуть список аккаунтов из базы. "
+            "Используй в начале задачи чтобы проверить, есть ли уже загруженные аккаунты "
+            "перед вызовом load_sessions. Опционально фильтр по status (ACTIVE/FROZEN/BANNED)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "Фильтр по статусу: ACTIVE | FROZEN | BANNED | UNKNOWN. Пусто = все."},
+            },
+            "required": [],
         },
     },
 

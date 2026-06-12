@@ -148,6 +148,42 @@ class ToolExecutor:
             result = await run_temp_script(args["code"], args.get("timeout", 60))
             return {"text": format_command_result(result), **result}
 
+        if name == "list_accounts":
+            from tools.db import get_all_accounts
+            accs = await get_all_accounts()
+            status_filter = args.get("status", "").upper()
+            if status_filter:
+                accs = [a for a in accs if a.status == status_filter]
+            items = [
+                {
+                    "id":       a.id,
+                    "phone":    a.phone,
+                    "status":   a.status,
+                    "category": a.uid_category,
+                    "conductor": a.is_conductor,
+                }
+                for a in accs
+            ]
+            return {
+                "ok":      True,
+                "total":   len(items),
+                "accounts": items,
+                "text":    f"Аккаунтов в базе: {len(items)}\n" + "\n".join(
+                    f"  id={a['id']} {a['phone']} [{a['status']}]{' (conductor)' if a['conductor'] else ''}"
+                    for a in items
+                ),
+            }
+
+        if name == "sleep_seconds":
+            await asyncio.sleep(args["seconds"])
+            return {"ok": True, "slept": args["seconds"]}
+
+        if name == "get_inline_button_urls":
+            from tools.tg_tools import get_inline_button_urls
+            return await get_inline_button_urls(
+                args["account_id"], args["peer"], args["message_id"]
+            )
+
         if name == "load_sessions":
             from pathlib import Path
             from config.constants import UPLOADS_DIR
@@ -168,19 +204,22 @@ class ToolExecutor:
                     r = await load_session_file(sp)
                     results.append(r)
 
-            ok_count  = sum(1 for r in results if r.ok)
-            err_count = sum(1 for r in results if not r.ok)
-            details   = [
-                f"{'✅' if r.ok else '❌'} {r.phone or '?'}: {r.error or f'id={r.account_id}'}"
+            ok_count      = sum(1 for r in results if r.ok and not (r.error or "").endswith("(skipped)"))
+            skipped_count = sum(1 for r in results if r.ok and (r.error or "").endswith("(skipped)"))
+            err_count     = sum(1 for r in results if not r.ok)
+            details       = [
+                f"{'⏭' if (r.ok and (r.error or '').endswith('(skipped)')) else ('✅' if r.ok else '❌')} "
+                f"{r.phone or '?'}: {r.error or f'id={r.account_id}'}"
                 for r in results
             ]
             return {
                 "ok":       True,
                 "loaded":   ok_count,
+                "skipped":  skipped_count,
                 "errors":   err_count,
                 "total":    len(results),
                 "details":  details,
-                "text":     f"Загружено: {ok_count}, ошибок: {err_count}\n" + "\n".join(details),
+                "text":     f"Загружено: {ok_count}, пропущено (уже в базе): {skipped_count}, ошибок: {err_count}\n" + "\n".join(details),
             }
 
         if name == "propose_plan":

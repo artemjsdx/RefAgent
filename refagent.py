@@ -11,11 +11,37 @@ refagent.py — Точка входа RefAgent.
 """
 
 import asyncio
+import os
+import signal
 import sys
 import logging
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+_PID_FILE = Path(__file__).parent / "data" / "refagent.pid"
+
+
+def _enforce_single_instance() -> None:
+    """Убить предыдущий процесс если PID-файл существует и процесс жив."""
+    _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if _PID_FILE.exists():
+        try:
+            old_pid = int(_PID_FILE.read_text().strip())
+            if old_pid != os.getpid():
+                try:
+                    os.kill(old_pid, signal.SIGTERM)
+                    import time; time.sleep(1)
+                    # Если ещё жив — SIGKILL
+                    try:
+                        os.kill(old_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                except ProcessLookupError:
+                    pass  # уже мёртв
+        except (ValueError, OSError):
+            pass
+    _PID_FILE.write_text(str(os.getpid()))
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -76,6 +102,7 @@ def prompt_token(existing: str | None) -> str:
 
 def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     from bot.ui.animator import Animator
+    from bot.handlers.reply_handler import router as reply_router
     from bot.handlers.start         import router as start_router
     from bot.handlers.settings_menu import router as settings_router
     from bot.handlers.sessions      import router as sessions_router, set_animator as set_sessions_animator
@@ -85,7 +112,11 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     set_sessions_animator(animator)
     set_chat_animator(animator)
 
-    # Порядок важен: sessions до start (чтобы CB_SESSIONS не перехватил placeholder)
+    # ПОРЯДОК КРИТИЧЕН:
+    # 1. reply_router — первым, перехватывает тексты reply-кнопок до dialog-хендлера
+    # 2. sessions, chat, settings — основная логика
+    # 3. start — последним (catch-all для CB_BACK_MAIN и навигации)
+    dp.include_router(reply_router)
     dp.include_router(sessions_router)
     dp.include_router(chat_router)
     dp.include_router(settings_router)
@@ -97,6 +128,8 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
 # ════════════════════════════════════════════════════
 
 async def main() -> None:
+    _enforce_single_instance()
+
     from tools.db import init_db
     from bot.ui.report import init_results_db
 

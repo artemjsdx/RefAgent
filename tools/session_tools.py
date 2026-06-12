@@ -182,12 +182,18 @@ async def load_session_file(session_path: Path) -> SessionLoadResult:
       1. detect_format
       2. read_sidecar_json (ОБЯЗАТЕЛЬНО)
       3. extract_uid + categorize
-      4. Проверить уникальность api_id
+      4. Проверить дубликат по session_path
       5. Вставить в accounts
     """
     phone = extract_phone_from_session(session_path)
 
     try:
+        # Пропустить если уже загружено (дедупликация)
+        from tools.db import session_path_exists
+        if await session_path_exists(str(session_path)):
+            return SessionLoadResult(phone, ok=True,
+                error="уже в базе (skipped)")
+
         fmt = detect_format(session_path)
         if fmt == FORMAT_UNKNOWN:
             return SessionLoadResult(phone, ok=False,
