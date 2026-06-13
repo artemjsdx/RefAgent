@@ -14,7 +14,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 # ТЕКСТЫ КНОПОК (константы для reply_handler)
 # ════════════════════════════════════════════════════
 
-BTN_WRITE_TASK     = "📝 Написать задачу"
+BTN_EXIT_CHAT      = "🚪 Выйти из чата"
 BTN_MY_CHATS       = "💬 Мои чаты"
 BTN_CLEAR_HISTORY  = "🧹 Очистить историю"
 
@@ -34,7 +34,7 @@ def idle_keyboard() -> ReplyKeyboardMarkup:
     """Состояние dialog / stopped — ждём задачу."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_WRITE_TASK), KeyboardButton(text=BTN_MY_CHATS)],
+            [KeyboardButton(text=BTN_MY_CHATS), KeyboardButton(text=BTN_EXIT_CHAT)],
             [KeyboardButton(text=BTN_CLEAR_HISTORY)],
         ],
         resize_keyboard   = True,
