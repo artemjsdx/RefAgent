@@ -32,6 +32,7 @@ from typing import Any, Callable, Coroutine
 
 KIND_THINKING      = "thinking"
 KIND_THOUGHT       = "thought"
+KIND_STATUS        = "status"      # agent-written [S: ...] inline status line
 KIND_TOOL_CALL     = "tool_call"
 KIND_TOOL_RESULT   = "tool_result"
 KIND_STEP          = "step"
