@@ -220,11 +220,12 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
             if anim_type is not None:
                 await _dialog_switch_anim(anim_type)
         elif k == _KIND_THOUGHT:
+            from bot.utils.md_to_html import md_to_html
             raw = event.data.get("text", "").strip()
             if not raw:
                 return
             if _animator and anim["msg_id"]:
-                await _animator.finalize(tg_chat_id, anim["msg_id"], f"💭 {raw[:500]}")
+                await _animator.finalize(tg_chat_id, anim["msg_id"], f"💭 {md_to_html(raw[:500])}")
                 anim["msg_id"] = None
             if _animator:
                 anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
@@ -270,11 +271,13 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
                 await save_pair(chat.id, user_text, plan_text)
 
             else:
+                from bot.utils.md_to_html import md_to_html
+                result_html = md_to_html(result)
                 if _animator and anim["msg_id"]:
-                    await _animator.finalize(tg_chat_id, anim["msg_id"], result, reply_markup=idle_keyboard())
+                    await _animator.finalize(tg_chat_id, anim["msg_id"], result_html, reply_markup=idle_keyboard())
                     anim["msg_id"] = None
                 else:
-                    await bot.send_message(tg_chat_id, result, parse_mode="HTML", reply_markup=idle_keyboard())
+                    await bot.send_message(tg_chat_id, result_html, parse_mode="HTML", reply_markup=idle_keyboard())
                 from tools.history_db import save_pair
                 await save_pair(chat.id, user_text, result)
 
