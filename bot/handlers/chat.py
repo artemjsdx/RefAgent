@@ -163,12 +163,12 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
 
     # Сразу переключаемся в running — показываем кнопку ⛔ Остановить
     await state.set_state(ChatStates.running)
-    await message.answer("⚙️ Агент работает...", reply_markup=running_keyboard())
 
     anim    = {"msg_id": None}
     _flags  = {"stopped": False}   # флаг: задача остановлена, не запускать новые анимации
     if _animator:
-        anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
+        # keyboard прикрепляем к первому анимационному сообщению
+        anim["msg_id"] = await _animator.start(tg_chat_id, "thinking", reply_markup=running_keyboard())
 
     from agent.status_event import StatusEvent, KIND_THOUGHT as _KIND_THOUGHT, KIND_TOOL_CALL as _KIND_TOOL_CALL
 
@@ -271,10 +271,10 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
 
             else:
                 if _animator and anim["msg_id"]:
-                    await _animator.finalize(tg_chat_id, anim["msg_id"], result)
+                    await _animator.finalize(tg_chat_id, anim["msg_id"], result, reply_markup=idle_keyboard())
                     anim["msg_id"] = None
                 else:
-                    await bot.send_message(tg_chat_id, result, parse_mode="HTML")
+                    await bot.send_message(tg_chat_id, result, parse_mode="HTML", reply_markup=idle_keyboard())
                 from tools.history_db import save_pair
                 await save_pair(chat.id, user_text, result)
 
@@ -293,10 +293,10 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
             _outcome["v"] = "error"
             log.exception(f"[Chat] Ошибка диалога: {e}")
             if _animator and anim["msg_id"]:
-                await _animator.finalize(tg_chat_id, anim["msg_id"], f"❌ Ошибка: {e}")
+                await _animator.finalize(tg_chat_id, anim["msg_id"], f"❌ Ошибка: {e}", reply_markup=idle_keyboard())
                 anim["msg_id"] = None
             else:
-                await bot.send_message(tg_chat_id, f"❌ Ошибка: {e}")
+                await bot.send_message(tg_chat_id, f"❌ Ошибка: {e}", reply_markup=idle_keyboard())
 
         finally:
             agent_state.set_active(False)
@@ -306,13 +306,8 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
             elif oc == "cancelled":
                 pass  # reply_stop уже отправил idle_keyboard + stopped state
             else:
-                # "done" или "error" — возвращаем в dialog
+                # "done" или "error" — keyboard уже прикреплена к result/error выше
                 await state.set_state(ChatStates.dialog)
-                try:
-                    txt = "✅ Готово." if oc == "done" else "⚠️ Возникла ошибка. Можешь написать снова."
-                    await bot.send_message(tg_chat_id, txt, reply_markup=idle_keyboard())
-                except Exception:
-                    pass
 
     _task = asyncio.create_task(_run())
 
@@ -345,7 +340,6 @@ async def cb_plan_run(query: CallbackQuery, state: FSMContext, bot: Bot) -> None
         parse_mode   = "HTML",
         reply_markup = task_controls_keyboard(),
     )
-    await bot.send_message(chat_id, "⚙️ Агент работает...", reply_markup=running_keyboard())
     await query.answer()
 
     try:
@@ -573,7 +567,7 @@ async def _start_agent_task(
 
     async def _run() -> None:
         if _animator:
-            run_anim["msg_id"] = await _animator.start(chat_id, "thinking")
+            run_anim["msg_id"] = await _animator.start(chat_id, "thinking", reply_markup=running_keyboard())
         try:
             result = await _loop.run(
                 chat_id      = chat_id,
@@ -611,11 +605,7 @@ async def _start_agent_task(
             agent_state.set_active(False)
             await state.set_state(ChatStates.dialog)
             try:
-                await bot.send_message(
-                    chat_id,
-                    "✅ Задача завершена.",
-                    reply_markup = idle_keyboard(),
-                )
+                await bot.send_message(chat_id, "✅ Задача завершена.", reply_markup=idle_keyboard())
             except Exception:
                 pass
 
