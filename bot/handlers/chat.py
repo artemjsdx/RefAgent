@@ -168,12 +168,23 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
     block  = CompoundBlock(bot)
     await block.start(tg_chat_id, "thinking", reply_markup=running_keyboard())
 
-    from agent.status_event import StatusEvent, KIND_THOUGHT as _KIND_THOUGHT, KIND_TOOL_CALL as _KIND_TOOL_CALL
+    from agent.status_event import (
+        StatusEvent,
+        KIND_THOUGHT   as _KIND_THOUGHT,
+        KIND_TOOL_CALL as _KIND_TOOL_CALL,
+        KIND_STATUS    as _KIND_STATUS,
+    )
 
     async def _dialog_log_cb(event: "StatusEvent") -> None:
         if _flags["stopped"]:
             return
         k = event.kind
+        if k == _KIND_STATUS:
+            # Agent-written [S: ...] line — show as log entry, no status change
+            text = event.data.get("text", "").strip()
+            if text:
+                await block.add_log(f"💬 {text}")
+            return
         if k == _KIND_TOOL_CALL:
             tool         = event.data.get("tool", "")
             args_preview = event.data.get("args_preview", "")
