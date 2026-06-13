@@ -38,7 +38,8 @@ async def send_error(bot: Bot, chat_id: int, text: str) -> int:
 
 async def send_thought(bot: Bot, chat_id: int, text: str) -> int:
     """Агент выдал промежуточную мысль."""
-    safe = text[:500]
+    from bot.utils.md_to_html import md_to_html
+    safe = md_to_html(text[:500])
     msg  = await bot.send_message(chat_id, f"💭 {safe}", parse_mode="HTML")
     return msg.message_id
 
