@@ -6,8 +6,11 @@ new_chat.py — FSM для создания нового LLM-чата.
   2. waiting_provider — выбор провайдера (inline buttons)
   3. waiting_api_key  — ввод API ключа
   4. waiting_api_url  — ввод FavoriteAPI URL (только для FA)
-  5. waiting_model    — ввод модели (опционально, можно пропустить)
+  5. waiting_model    — ввод модели или браузер (OpenRouter: paginated)
   → Чат создан, FSM → ChatStates.dialog + active_chat_id в state data
+
+OpenRouter: на шаге 5 доступен браузер моделей (бесплатные/платные/ручной ввод).
+Callback prefix: ncm: (new chat model) — не пересекается с settings-browser.
 """
 
 from __future__ import annotations
@@ -26,6 +29,17 @@ from bot.keyboards.chat_keyboards import (
 )
 from bot.keyboards.reply_keyboard import idle_keyboard
 from tools.chat_db import create_chat, PROVIDER_LABELS, PROVIDER_EMOJIS
+from config.constants import MODELS_PER_PAGE
+
+# ────────────────────────────────────────────────────
+# Callback prefix для браузера моделей в new_chat FSM.
+# Изолирован от settings_menu (там prefix "models:").
+# ────────────────────────────────────────────────────
+_NCM_FREE   = "ncm:free:"     # + page
+_NCM_PAID   = "ncm:paid:"     # + page
+_NCM_SELECT = "ncm:select:"   # + model_id
+_NCM_MANUAL = "ncm:manual"    # переключиться на ручной ввод
+_NCM_NOOP   = "ncm:noop"      # индикатор страницы (игнорировать)
 
 log    = logging.getLogger(__name__)
 router = Router()
@@ -178,22 +192,39 @@ async def process_api_url(message: Message, state: FSMContext) -> None:
 # ════════════════════════════════════════════════════
 
 async def _ask_model(message: Message, state: FSMContext, provider: str) -> None:
-    """Показать запрос на ввод модели."""
-    model_hints = {
-        "openrouter":  "openai/gpt-4o-mini",
-        "favoriteapi": "gpt-4o-mini",
-        "bai":         "kimi-k2.5",
-    }
-    hint = model_hints.get(provider, "gpt-4o-mini")
-
+    """Показать запрос на ввод модели. OpenRouter — браузер + ручной ввод."""
     await state.set_state(NewChatStates.waiting_model)
-    await message.answer(
-        "🧠 Выбери модель.\n\n"
-        f"Введи ID модели или нажми <b>Пропустить</b> (будет использована модель по умолчанию).\n"
-        f"<i>Например: <code>{hint}</code></i>",
-        parse_mode   = "HTML",
-        reply_markup = skip_model_keyboard(),
-    )
+
+    if provider == "openrouter":
+        # OpenRouter: предлагаем браузер моделей или ручной ввод
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Бесплатные модели",     callback_data=f"{_NCM_FREE}0")],
+            [InlineKeyboardButton(text="💳 Платные модели",        callback_data=f"{_NCM_PAID}0")],
+            [InlineKeyboardButton(text="⌨️ Ввести ID вручную",    callback_data=_NCM_MANUAL)],
+            [InlineKeyboardButton(text="⏭ Пропустить (deepseek-r1:free)", callback_data=CB_SKIP_MODEL)],
+        ])
+        await message.answer(
+            "🧠 <b>Выбери модель OpenRouter</b>\n\n"
+            "Просмотри список или введи ID вручную.\n"
+            "По умолчанию: <code>deepseek/deepseek-r1-0528:free</code>",
+            parse_mode   = "HTML",
+            reply_markup = kb,
+        )
+    else:
+        # FA / b.ai — только ручной ввод
+        model_hints = {
+            "favoriteapi": "gpt-4o-mini",
+            "bai":         "kimi-k2.5",
+        }
+        hint = model_hints.get(provider, "gpt-4o-mini")
+        await message.answer(
+            "🧠 Выбери модель.\n\n"
+            f"Введи ID модели или нажми <b>Пропустить</b> (будет использована модель по умолчанию).\n"
+            f"<i>Например: <code>{hint}</code></i>",
+            parse_mode   = "HTML",
+            reply_markup = skip_model_keyboard(),
+        )
 
 
 @router.message(NewChatStates.waiting_model)
@@ -205,6 +236,116 @@ async def process_model_input(message: Message, state: FSMContext, bot: Bot) -> 
 @router.callback_query(NewChatStates.waiting_model, F.data == CB_SKIP_MODEL)
 async def cb_skip_model(query: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     await _finish_chat_creation(query.message, state, bot, model=None, from_query=query)
+
+
+# ════════════════════════════════════════════════════
+# БРАУЗЕР МОДЕЛЕЙ OPENROUTER (в контексте создания чата)
+# prefix ncm: — New Chat Model
+# ════════════════════════════════════════════════════
+
+@router.callback_query(
+    NewChatStates.waiting_model,
+    F.data.func(lambda d: d.startswith("ncm:free:") or d.startswith("ncm:paid:")),
+)
+async def cb_ncm_page(query: CallbackQuery, state: FSMContext) -> None:
+    d = query.data
+    if d.startswith(_NCM_FREE):
+        tier = "free"
+        page = int(d[len(_NCM_FREE):])
+    else:
+        tier = "paid"
+        page = int(d[len(_NCM_PAID):])
+
+    data    = await state.get_data()
+    api_key = data.get("chat_api_key", "")
+    models  = await _ncm_fetch_models(api_key)
+    if not models:
+        await query.answer("Не удалось загрузить модели. Введи ID вручную.", show_alert=True)
+        return
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    filtered    = [m for m in models if (m.is_free if tier == "free" else not m.is_free)]
+    total       = len(filtered)
+    total_pages = max(1, (total + MODELS_PER_PAGE - 1) // MODELS_PER_PAGE)
+    start       = page * MODELS_PER_PAGE
+    end         = min(start + MODELS_PER_PAGE, total)
+    page_models = filtered[start:end]
+
+    rows = []
+    for m in page_models:
+        if m.is_free:
+            price_str = "free"
+        elif m.price_prompt is not None:
+            price_str = f"${m.price_prompt:.2f}/1M"
+        else:
+            price_str = "paid"
+        name = m.name[:26] if len(m.name) > 26 else m.name
+        rows.append([InlineKeyboardButton(
+            text          = f"{name} [{price_str}]",
+            callback_data = f"{_NCM_SELECT}{m.id}",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀", callback_data=f"ncm:{tier}:{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=_NCM_NOOP))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="▶", callback_data=f"ncm:{tier}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+
+    tier_label = "Бесплатные" if tier == "free" else "Платные"
+    rows.append([InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=_NCM_MANUAL)])
+    rows.append([InlineKeyboardButton(text="⏭ Пропустить (по умолчанию)", callback_data=CB_SKIP_MODEL)])
+
+    await query.message.edit_text(
+        f"🧠 <b>Модели OpenRouter — {tier_label}</b>\n"
+        f"Страница {page + 1} из {total_pages} | Всего: {total}",
+        parse_mode   = "HTML",
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await query.answer()
+
+
+@router.callback_query(NewChatStates.waiting_model, F.data.startswith(_NCM_SELECT))
+async def cb_ncm_select(query: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    model_id = query.data[len(_NCM_SELECT):]
+    await _finish_chat_creation(query.message, state, bot, model=model_id, from_query=query)
+
+
+@router.callback_query(NewChatStates.waiting_model, F.data == _NCM_MANUAL)
+async def cb_ncm_manual(query: CallbackQuery, state: FSMContext) -> None:
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ Пропустить (по умолчанию)", callback_data=CB_SKIP_MODEL)],
+    ])
+    await query.message.edit_text(
+        "⌨️ <b>Ввод ID модели вручную</b>\n\n"
+        "Введи ID модели:\n"
+        "<i>Например: <code>deepseek/deepseek-r1-0528:free</code></i>\n\n"
+        "<a href='https://openrouter.ai/models'>Список моделей OpenRouter</a>",
+        parse_mode   = "HTML",
+        reply_markup = kb,
+        disable_web_page_preview = True,
+    )
+    await query.answer()
+
+
+@router.callback_query(NewChatStates.waiting_model, F.data == _NCM_NOOP)
+async def cb_ncm_noop(query: CallbackQuery) -> None:
+    await query.answer()
+
+
+async def _ncm_fetch_models(api_key: str):
+    """Получить модели OpenRouter используя api_key из FSM state."""
+    try:
+        from providers.openrouter import OpenRouterProvider
+        p = OpenRouterProvider(api_key=api_key)
+        return await p.get_models()
+    except Exception as e:
+        log.warning(f"[NewChat] Не удалось загрузить модели OR: {e}")
+        return []
 
 
 # ════════════════════════════════════════════════════

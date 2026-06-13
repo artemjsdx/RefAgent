@@ -138,6 +138,23 @@ async def update_chat_model(chat_id: int, model: Optional[str]) -> None:
         await db.commit()
 
 
+async def update_chat_fields(chat_id: int, **fields) -> None:
+    """
+    Обновить произвольные поля чата.
+    Разрешённые поля: name, api_key, api_url, model.
+    Пример: await update_chat_fields(42, name="New Name", model="gpt-4o")
+    """
+    allowed = {"name", "api_key", "api_url", "model"}
+    filtered = {k: v for k, v in fields.items() if k in allowed}
+    if not filtered:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in filtered)
+    values     = list(filtered.values()) + [chat_id]
+    async with aiosqlite.connect(SESSIONS_DB) as db:
+        await db.execute(f"UPDATE chats SET {set_clause} WHERE id = ?", values)
+        await db.commit()
+
+
 # ════════════════════════════════════════════════════
 # HELPERS
 # ════════════════════════════════════════════════════

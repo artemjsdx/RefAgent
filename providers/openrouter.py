@@ -18,14 +18,20 @@ from config.constants import (
 
 log = logging.getLogger(__name__)
 
-# Free models tried in order when primary is 429 rate-limited
+# Free models tried in order when primary is 429 rate-limited.
+# Ordered by reliability: most stable first.
 OPENROUTER_FREE_FALLBACKS = [
-    "openai/gpt-oss-20b:free",
-    "openai/gpt-oss-120b:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "deepseek/deepseek-r1-0528:free",
+    "deepseek/deepseek-chat-v3-0324:free",
+    "google/gemma-3-27b-it:free",
     "google/gemma-4-31b-it:free",
+    "meta-llama/llama-4-scout:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
     "meta-llama/llama-3.1-8b-instruct",   # cheap paid fallback ~$0.00002/1K
 ]
+
+# Default model — deepseek-r1 хорошо справляется с ReAct и tool calls
+OPENROUTER_DEFAULT_MODEL = "deepseek/deepseek-r1-0528:free"
 
 
 # ════════════════════════════════════════════════════
@@ -41,7 +47,7 @@ class OpenRouterProvider(BaseProvider):
 
     def __init__(self, api_key: str, default_model: Optional[str] = None):
         self._api_key       = api_key
-        self._default_model = default_model or "openai/gpt-oss-20b:free"
+        self._default_model = default_model or OPENROUTER_DEFAULT_MODEL
         self._models_cache: list[ModelInfo] = []
         self._cache_ts: float = 0.0
 

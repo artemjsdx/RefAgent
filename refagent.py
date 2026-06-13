@@ -109,6 +109,7 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     from bot.handlers.chat          import router as chat_router, set_animator as set_chat_animator
     from bot.handlers.new_chat      import router as new_chat_router
     from bot.handlers.chat_list     import router as chat_list_router
+    from bot.handlers.chat_edit     import router as chat_edit_router
     from bot.handlers.skills        import router as skills_router
 
     animator = Animator(bot)
@@ -124,6 +125,7 @@ def register_handlers(dp: Dispatcher, bot: Bot) -> None:
     dp.include_router(skills_router)
     dp.include_router(new_chat_router)
     dp.include_router(chat_list_router)
+    dp.include_router(chat_edit_router)   # редактирование настроек чата
     dp.include_router(sessions_router)
     dp.include_router(chat_router)
     dp.include_router(settings_router)

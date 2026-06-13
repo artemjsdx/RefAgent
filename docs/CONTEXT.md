@@ -1,5 +1,5 @@
 # CONTEXT.md — RefAgent Project State
-_Last updated: Session #7 (2026-06-12) — Multi-chat UX overhaul complete_
+_Last updated: Session #8 (2026-06-13) — Chat Edit + Model Browser in new_chat FSM_
 
 ## Что такое RefAgent
 Telegram-бот на Python (aiogram 3) + ReAct-агент (Telethon) для автоматизации реферальных задач.
@@ -135,6 +135,49 @@ CREATE TABLE chats (
 
 ---
 
+### ✅ Этап 8 — Chat Edit + Model Browser (Session #8)
+
+#### Цель: закрыть все TODO из Этапа 6/7
+
+#### 1. OpenRouter default model обновлён
+| Файл | Изменение |
+|------|-----------|
+| `providers/openrouter.py` | `OPENROUTER_DEFAULT_MODEL = "deepseek/deepseek-r1-0528:free"` |
+| | Новый fallback chain: deepseek-r1 → deepseek-chat-v3 → gemma-3-27b → gemma-4-31b → llama-4-scout |
+
+#### 2. Браузер моделей в new_chat FSM (OpenRouter)
+При создании чата с OpenRouter шаг "Выбери модель" теперь показывает:
+- 📋 Бесплатные / 💳 Платные — paginated список (10/страница)
+- ⌨️ Ввести ID вручную
+- ⏭ Пропустить (deepseek-r1:free по умолчанию)
+
+Callback prefix: `ncm:` (New Chat Model) — изолирован от settings browser (`models:`).
+
+Файлы:
+| Файл | Изменение |
+|------|-----------|
+| `bot/handlers/new_chat.py` | `_ask_model()` — OpenRouter показывает браузер; callbacks `ncm:free/paid/select/manual/noop` |
+
+#### 3. Редактирование настроек существующего чата
+Новая кнопка **✏️ Изменить** в деталях чата (рядом с 💬 Открыть).
+
+FSM `ChatEditStates`:
+- `choosing_field` — меню: Название / API ключ / Модель
+- `editing_name` — ввод нового названия
+- `editing_apikey` — ввод нового ключа (с auto-delete сообщения)
+- `editing_model` — ввод модели или браузер (OpenRouter: free/paid pages)
+- `browsing_model` — browsing state (зарезервировано)
+
+Файлы:
+| Файл | Изменение |
+|------|-----------|
+| `bot/handlers/chat_edit.py` | НОВЫЙ: полный FSM редактирования |
+| `bot/keyboards/chat_keyboards.py` | +`CB_CHAT_EDIT`, кнопка ✏️ в `chat_detail_keyboard` |
+| `tools/chat_db.py` | +`update_chat_fields(**fields)` — универсальный UPDATE |
+| `refagent.py` | +`chat_edit_router` в `register_handlers()` |
+
+---
+
 ## Работающие боты (Replit Workflows)
 - **@TestAIReZero_bot** — RefAgent Bot (per-chat API keys, multi-chat)
 
@@ -147,9 +190,11 @@ CREATE TABLE chats (
 ---
 
 ## Известные баги / TODO
-- [ ] Модель по умолчанию для OpenRouter нужно обновить (текущая бесплатная модель может быть rate-limited)
-- [ ] При создании чата — показывать список доступных моделей провайдера
-- [ ] Редактирование настроек существующего чата (сейчас только удаление/пересоздание)
+- [x] ~~Модель по умолчанию для OpenRouter нужно обновить~~ — обновлена на deepseek-r1-0528:free
+- [x] ~~При создании чата — показывать список доступных моделей провайдера~~ — браузер ncm: интегрирован
+- [x] ~~Редактирование настроек существующего чата~~ — chat_edit.py, кнопка ✏️ Изменить
+- [ ] История сообщений чата (сейчас только FSM state, нет персистентного хранения)
+- [ ] Экспорт/импорт настроек чата (backup api_key + model)
 - [x] ~~Блок статуса "Thinking" никогда не менялся~~ — исправлено (animator fix)
 - [x] ~~Глобальные API ключи в .env~~ — убраны, теперь per-chat
 - [x] ~~Нет эмодзи в интерфейсе~~ — добавлены везде
