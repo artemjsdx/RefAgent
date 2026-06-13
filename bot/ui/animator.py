@@ -56,30 +56,32 @@ class Animator:
         self._bot   = bot
         self._tasks: dict[int, asyncio.Task] = {}   # message_id -> animation task
 
-    async def start(self, chat_id: int, action: str = "working") -> int:
+    async def start(self, chat_id: int, action: str = "working", reply_markup=None) -> int:
         """
         Send an animated status message and return its message_id.
         action: key from FRAMES dict (e.g. "working", "thinking", "reading")
+        reply_markup: optional ReplyKeyboardMarkup to attach (e.g. running_keyboard())
         """
         frames = FRAMES.get(action.lower(), DEFAULT_FRAMES)
-        msg    = await self._bot.send_message(chat_id, frames[0])
+        msg    = await self._bot.send_message(chat_id, frames[0], reply_markup=reply_markup)
         task   = asyncio.create_task(
             self._animate(chat_id, msg.message_id, frames)
         )
         self._tasks[msg.message_id] = task
         return msg.message_id
 
-    async def finalize(self, chat_id: int, msg_id: int, log_text: str) -> None:
+    async def finalize(self, chat_id: int, msg_id: int, log_text: str, reply_markup=None) -> None:
         """
         Stop animation, delete status message, send permanent log message.
         log_text: the permanent message to show after the action completes.
+        reply_markup: optional ReplyKeyboardMarkup to attach (e.g. idle_keyboard())
         """
         await self._stop(msg_id)
         try:
             await self._bot.delete_message(chat_id, msg_id)
         except TelegramBadRequest:
             pass   # message already deleted or too old
-        await self._bot.send_message(chat_id, log_text, parse_mode="HTML")
+        await self._bot.send_message(chat_id, log_text, parse_mode="HTML", reply_markup=reply_markup)
 
     async def stop_only(self, msg_id: int) -> None:
         """Stop animation without deleting or sending log (for error cases)."""
