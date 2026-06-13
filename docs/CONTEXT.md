@@ -1,5 +1,5 @@
 # CONTEXT.md — RefAgent Project State
-_Last updated: Session #8 (2026-06-13) — Chat Edit + Model Browser in new_chat FSM_
+_Last updated: Session #10 (2026-06-13) — Clear History button + Export/Import chat_
 
 ## Что такое RefAgent
 Telegram-бот на Python (aiogram 3) + ReAct-агент (Telethon) для автоматизации реферальных задач.
@@ -249,6 +249,49 @@ FSM `ChatEditStates`:
 
 ---
 
+---
+
+### ✅ Этап 10 — Clear History + Export/Import (Session #10)
+
+#### 1. Кнопка 🧹 Очистить историю в деталях чата
+| Файл | Изменение |
+|------|-----------|
+| `bot/keyboards/chat_keyboards.py` | +`CB_CHAT_CLEAR_HIST`, +`CB_CHAT_CONFIRM_HIST`, кнопка в `chat_detail_keyboard`, +`confirm_clear_hist_keyboard` |
+| `bot/handlers/chat_list.py` | +`cb_clear_hist` — показывает кол-во сообщений + подтверждение; +`cb_confirm_clear_hist` — очищает историю, возвращает в детали |
+
+Нажатие 🧹 показывает сколько сообщений будет удалено. После подтверждения агент начинает диалог с чистого листа.
+
+#### 2. 📤 Экспорт настроек чата
+| Файл | Изменение |
+|------|-----------|
+| `bot/keyboards/chat_keyboards.py` | +`CB_CHAT_EXPORT`, кнопка 📤 Экспорт в `chat_detail_keyboard` |
+| `bot/handlers/chat_list.py` | +`cb_export_chat` — отправляет JSON файл с настройками чата |
+
+Формат экспорта (`chat_<name>.json`):
+```json
+{
+  "refagent_chat_export": true,
+  "version": 1,
+  "name": "Название",
+  "provider": "openrouter",
+  "api_key": "sk-...",
+  "api_url": null,
+  "model": "deepseek/deepseek-r1-0528:free"
+}
+```
+**Внимание:** файл содержит API ключ — хранить безопасно.
+
+#### 3. 📥 Импорт чата из JSON файла
+| Файл | Изменение |
+|------|-----------|
+| `bot/handlers/chat_import.py` | НОВЫЙ: хендлер `handle_document` — перехватывает .json файлы с маркером `refagent_chat_export` |
+| `refagent.py` | +`chat_import_router` в `register_handlers()` |
+
+Пользователь отправляет .json файл боту → бот парсит, валидирует, создаёт чат → предлагает сразу открыть.
+Обычные .json файлы (без маркера) пропускаются, не мешая другим хендлерам.
+
+---
+
 ## Известные баги / TODO
 - [x] ~~Модель по умолчанию для OpenRouter нужно обновить~~ — обновлена на deepseek-r1-0528:free
 - [x] ~~При создании чата — показывать список доступных моделей провайдера~~ — браузер ncm: интегрирован
@@ -257,8 +300,8 @@ FSM `ChatEditStates`:
 - [x] ~~Статус-блок не всегда последний~~ — _with_anim helper в chat.py
 - [x] ~~`<tool_call>` теги в сообщениях~~ — strip_tool_calls(last_text) в react_loop.py
 - [x] ~~search_skills/use_skill не работали~~ — добавлены в _dispatch()
-- [ ] Кнопка "🧹 Очистить историю" в деталях чата (история растёт бесконечно)
-- [ ] Экспорт/импорт настроек чата (backup api_key + model)
+- [x] ~~Кнопка "🧹 Очистить историю" в деталях чата~~ — кнопка в chat_detail_keyboard, хендлер в chat_list.py
+- [x] ~~Экспорт/импорт настроек чата~~ — кнопка 📤 Экспорт (JSON файл), импорт через отправку .json боту
 - [x] ~~Блок статуса "Thinking" никогда не менялся~~ — исправлено (animator fix)
 - [x] ~~Глобальные API ключи в .env~~ — убраны, теперь per-chat
 - [x] ~~Нет эмодзи в интерфейсе~~ — добавлены везде
