@@ -80,7 +80,17 @@ async def _get_client(account_id: int) -> TelegramClient:
         api_id   = acc.api_id,
         api_hash = acc.api_hash,
     )
-    await client.connect()
+    try:
+        await client.connect()
+    except ValueError as e:
+        err = str(e)
+        if "unpack" in err:
+            raise ValueError(
+                f"Сессия {session_path.name} несовместима с текущей версией Telethon "
+                f"(структура таблицы sessions отличается). "
+                f"Пересоздай сессию через: python -m telethon.sessions {session_path.stem}"
+            ) from e
+        raise
     _clients[account_id] = client
     return client
 

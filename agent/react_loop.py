@@ -245,6 +245,34 @@ class ToolExecutor:
                 "steps":     args["steps"],
             }
 
+        if name == "search_skills":
+            query   = args.get("query", "")
+            results = _skills_search(query, limit=4)
+            if not results:
+                return {"ok": True, "results": [], "text": f"Навыки по теме '{query}' не найдены."}
+            parts = []
+            for s in results:
+                icon = "⚡" if s.skill_type == "workflow" else "📖"
+                parts.append(f"{icon} [{s.name}] {s.title}\n{s.content[:500]}")
+            return {"ok": True, "results": [s.name for s in results], "text": "\n\n---\n".join(parts)}
+
+        if name == "use_skill":
+            skill_name = args.get("name", "")
+            skill      = _get_skill(skill_name)
+            if not skill:
+                return {"ok": False, "error": f"Навык '{skill_name}' не найден."}
+            if skill.skill_type != "workflow":
+                return {"ok": True, "text": f"Навык '{skill_name}' (knowledge):\n{skill.content[:1000]}"}
+            steps = parse_workflow_steps(skill)
+            await _inc_skill(skill_name)
+            return {
+                "ok":   True,
+                "steps": steps,
+                "text": f"Навык '{skill.title}' загружен:\n" + "\n".join(
+                    f"{i+1}. {s}" for i, s in enumerate(steps)
+                ),
+            }
+
         return {"ok": False, "error": f"Unknown tool: {name}"}
 
 
@@ -282,15 +310,16 @@ class ReactLoop:
 
     async def run(
         self,
-        chat_id:      int,
-        user_message: str,
-        plan_steps:   Optional[list[str]] = None,
+        chat_id:          int,
+        user_message:     str,
+        plan_steps:       Optional[list[str]] = None,
+        initial_messages: Optional[list[Message]] = None,
     ) -> str:
         self._chat_id = chat_id          # store for countdown
         agent_state.set_active(True, chat_id)
         self._stop_event.clear()
         try:
-            return await self._react_loop(user_message, plan_steps)
+            return await self._react_loop(user_message, plan_steps, initial_messages)
         finally:
             agent_state.set_active(False)
             from tools.tg_tools import disconnect_all
@@ -298,8 +327,9 @@ class ReactLoop:
 
     async def _react_loop(
         self,
-        user_message: str,
-        plan_steps:   Optional[list[str]],
+        user_message:     str,
+        plan_steps:       Optional[list[str]],
+        initial_messages: Optional[list[Message]] = None,
     ) -> str:
         sys_prompt = build_system_prompt(
             provider   = "favoriteapi" if self._is_favoriteapi else "openrouter",
@@ -307,6 +337,7 @@ class ReactLoop:
         )
         self._history = [
             Message(role="system", content=sys_prompt),
+            *(initial_messages or []),
             Message(role="user",   content=user_message),
         ]
         tools          = None if self._is_favoriteapi else _get_openrouter_tools()
@@ -381,7 +412,8 @@ class ReactLoop:
                     if clean_text:
                         await self._emit(KIND_THOUGHT, text=clean_text[:300])
                 else:
-                    last_text = response.text
+                    # Always strip <tool_call> tags before storing/displaying text
+                    last_text = strip_tool_calls(response.text).strip()
                     self._history.append(Message(role="assistant", content=response.text))
                     no_tool_streak += 1
                     if no_tool_streak >= self.MAX_NO_TOOL or self._looks_final(response.text):
@@ -426,66 +458,11 @@ class ReactLoop:
                     result_preview = _result_preview(obs)
                     await self._emit(KIND_TOOL_RESULT, tool=tool_name, result_preview=result_preview)
 
-                    # Special: propose_plan → pause for user confirmation
-
-                    # ── Skills tools ──────────────────────────────────────────────────────
-  
-                    if tool_name == "search_skills":
-  
-                        query   = tool_args.get("query", "")
-  
-                        results = _skills_search(query, limit=4)
-  
-                        if not results:
-  
-                            tool_result = f"Навыки по теме '{query}' не найдены."
-  
-                        else:
-  
-                            parts = []
-  
-                            for s in results:
-  
-                                icon = "⚡" if s.skill_type == "workflow" else "📖"
-  
-                                parts.append(f"{icon} [{s.name}] {s.title}\n{s.content[:500]}")
-  
-                            tool_result = "\n\n---\n".join(parts)
-
-  
-                    elif tool_name == "use_skill":
-  
-                        skill_name = tool_args.get("name", "")
-  
-                        skill      = _get_skill(skill_name)
-  
-                        if not skill:
-  
-                            tool_result = f"Навык '{skill_name}' не найден."
-  
-                        elif skill.skill_type != "workflow":
-  
-                            tool_result = f"Навык '{skill_name}' — knowledge-тип, используй как инструкцию а не plan."
-  
-                        else:
-  
-                            steps = parse_workflow_steps(skill)
-  
-                            await _inc_skill(skill_name)
-  
-                            tool_result = (
-  
-                                f"Навык '{skill.title}' загружен. Используй шаги в propose_plan:\n"
-  
-                                + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))
-  
-                            )
-
-  
-                    elif tool_name == "propose_plan":
+                    # propose_plan returns special sentinel so chat.py shows plan confirm UI
+                    if tool_name == "propose_plan":
                         return f"__plan_proposed__{obs}"
 
-                    # Special: emit typed events for known tools
+                    # Emit typed status events for known tools (account, flood, etc.)
                     await self._emit_tool_specific(tool_name, tc["arguments"], obs)
 
         return last_text or "Agent finished (iteration limit reached)."

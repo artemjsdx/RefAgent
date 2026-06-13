@@ -8,6 +8,7 @@ FSM состояния:
   stopped      — задача остановлена
 
 Каждый чат имеет собственный API ключ (active_chat_id в FSM data).
+История сообщений персистентна — сохраняется в chat_history таблице.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from agent.react_loop import ReactLoop
 from agent.plan_manager import plan_manager
 from agent.state import agent_state
 from providers import build_provider_from_chat
+from providers.base import Message as LLMMessage
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +101,17 @@ async def _no_chat_reply(message: Message) -> None:
 
 
 # ════════════════════════════════════════════════════
+# ИСТОРИЯ
+# ════════════════════════════════════════════════════
+
+async def _load_llm_history(chat_record_id: int, limit: int = 20) -> list[LLMMessage]:
+    """Загрузить историю из БД и вернуть как список LLMMessage."""
+    from tools.history_db import load_history
+    rows = await load_history(chat_record_id, limit=limit)
+    return [LLMMessage(role=r.role, content=r.content) for r in rows]
+
+
+# ════════════════════════════════════════════════════
 # СВОБОДНЫЙ ДИАЛОГ
 # ════════════════════════════════════════════════════
 
@@ -120,14 +133,17 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
         )
         return
 
-    tg_chat_id = message.chat.id   # Telegram chat_id — только для аниматора
+    tg_chat_id = message.chat.id
 
-    # Собрать прикреплённые файлы из sandbox этого чата (ключ = chat.id, не Telegram chat_id)
+    # Прикреплённые файлы из sandbox этого чата
     pending = pop_files(chat.id)
     user_text = message.text or ""
     if pending:
         attachment_lines = "\n".join(f.context_line() for f in pending)
         user_text = f"{user_text}\n\n{attachment_lines}" if user_text else attachment_lines
+
+    # Загрузить историю из БД для этого чата
+    initial_messages = await _load_llm_history(chat.id)
 
     anim = {"msg_id": None}
     if _animator:
@@ -151,8 +167,9 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
     try:
         react  = ReactLoop(provider=provider, log_cb=_dialog_log_cb, bot=bot)
         result = await react.run(
-            chat_id      = tg_chat_id,
-            user_message = user_text,
+            chat_id          = tg_chat_id,
+            user_message     = user_text,
+            initial_messages = initial_messages,
         )
 
         if result.startswith("__plan_proposed__"):
@@ -177,11 +194,18 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
                 "🚀 Запустить план?",
                 reply_markup = plan_confirm_keyboard(),
             )
+            # Сохранить обмен в историю (план = ответ ассистента)
+            from tools.history_db import save_pair
+            await save_pair(chat.id, user_text, plan_text)
         else:
             if _animator and anim["msg_id"]:
                 await _animator.finalize(tg_chat_id, anim["msg_id"], result)
             else:
                 await message.answer(result, parse_mode="HTML", reply_markup=idle_keyboard())
+
+            # Сохранить обмен в историю
+            from tools.history_db import save_pair
+            await save_pair(chat.id, user_text, result)
 
     except Exception as e:
         log.exception(f"[Chat] Ошибка диалога: {e}")
@@ -341,40 +365,48 @@ async def _start_agent_task(
 
     run_anim = {"msg_id": None}
 
+    # ── Animator helper — статус-блок ВСЕГДА последним ─────────────────
+    async def _with_anim(coro, terminal: bool = False) -> None:
+        """
+        Остановить аниматор → отправить сообщение → перезапустить аниматор.
+        terminal=True — не перезапускать (конечное событие: STOP, завершение).
+        """
+        if _animator and run_anim["msg_id"]:
+            await _animator.stop_only(run_anim["msg_id"])
+            try:
+                await bot.delete_message(chat_id, run_anim["msg_id"])
+            except Exception:
+                pass
+            run_anim["msg_id"] = None
+        await coro
+        if not terminal and _animator:
+            run_anim["msg_id"] = await _animator.start(chat_id, "thinking")
+
     async def log_cb(event: StatusEvent) -> None:
         k = event.kind
         d = event.data
         try:
             if k in (KIND_THINKING, KIND_TOOL_CALL, KIND_TOOL_RESULT, KIND_DONE):
-                pass
+                pass  # не показываем сырые tool events в чате
             elif k == KIND_THOUGHT:
-                if _animator and run_anim["msg_id"]:
-                    await _animator.stop_only(run_anim["msg_id"])
-                    try:
-                        await bot.delete_message(chat_id, run_anim["msg_id"])
-                    except Exception:
-                        pass
-                    run_anim["msg_id"] = None
-                await send_thought(bot, chat_id, d.get("text", ""))
-                if _animator:
-                    run_anim["msg_id"] = await _animator.start(chat_id, "thinking")
+                await _with_anim(send_thought(bot, chat_id, d.get("text", "")))
             elif k == KIND_STEP:
-                await send_step(bot, chat_id, d["n"], d["total"], d.get("desc", ""))
+                await _with_anim(send_step(bot, chat_id, d["n"], d["total"], d.get("desc", "")))
             elif k == KIND_WAIT:
-                await send_wait(bot, chat_id, d.get("seconds", 0), d.get("reason", ""))
+                await _with_anim(send_wait(bot, chat_id, d.get("seconds", 0), d.get("reason", "")))
             elif k == KIND_RETRY:
-                await send_retry(bot, chat_id, d.get("attempt", 1), d.get("reason", ""))
+                await _with_anim(send_retry(bot, chat_id, d.get("attempt", 1), d.get("reason", "")))
             elif k in (KIND_WARN, KIND_CONTEXT_RESET):
                 text = d.get("text", "Context reset") if k == KIND_CONTEXT_RESET else d.get("text", "")
-                await send_warn(bot, chat_id, text)
+                await _with_anim(send_warn(bot, chat_id, text))
             elif k == KIND_ERROR:
-                await send_error(bot, chat_id, d.get("text", "Unknown error"))
+                await _with_anim(send_error(bot, chat_id, d.get("text", "Unknown error")))
             elif k == KIND_STOP:
-                await send_log(bot, chat_id, "Stopped.")
+                await _with_anim(send_log(bot, chat_id, "🛑 Остановлено."), terminal=True)
             elif k == KIND_SEPARATOR:
-                await send_separator(bot, chat_id)
+                await _with_anim(send_separator(bot, chat_id))
             elif k == "account":
-                await send_account(bot, chat_id, d.get("phone", "?"), d.get("status", ""))
+                await _with_anim(send_account(bot, chat_id, d.get("phone", "?"), d.get("status", "")))
         except Exception:
             pass
 
@@ -398,6 +430,7 @@ async def _start_agent_task(
                 user_message = user_msg,
                 plan_steps   = [s.description for s in plan.steps],
             )
+            # Остановить аниматор перед финальным репортом
             if _animator and run_anim["msg_id"]:
                 await _animator.stop_only(run_anim["msg_id"])
                 try:

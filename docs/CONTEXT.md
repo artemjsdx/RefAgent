@@ -189,11 +189,75 @@ FSM `ChatEditStates`:
 
 ---
 
+---
+
+### ✅ Этап 9 — History + Bug Fixes (Session #9)
+
+#### 1. Персистентная история сообщений
+| Файл | Изменение |
+|------|-----------|
+| `tools/history_db.py` | НОВЫЙ: таблица `chat_history`, save_pair/load_history/clear_history |
+| `tools/db.py` | `init_db()` создаёт history таблицу + фикс: skill_stats был вне `async with` |
+| `bot/handlers/chat.py` | `_load_llm_history()` + `save_pair()` в `handle_dialog_message` |
+| `agent/react_loop.py` | `run()` принимает `initial_messages: list[Message]` — инжектируется в историю |
+
+Ключ истории = `chat_record_id` (ID записи в таблице `chats`). Каждый чат имеет независимую историю.
+
+#### 2. Фикс: статус-блок всегда последний
+**Проблема:** `send_step`, `send_account`, `send_warn`, `send_error` и др. отправлялись без остановки аниматора → "Thinking..." блок оказывался не последним.
+
+**Фикс:** В `_start_agent_task` добавлен helper `_with_anim(coro, terminal=False)`:
+1. Останавливает и удаляет текущий аниматор
+2. Выполняет `coro` (отправляет сообщение)
+3. Запускает новый аниматор (если не terminal)
+
+Файл: `bot/handlers/chat.py`
+
+#### 3. Фикс: `<tool_call>` теги в сообщениях Telegram
+**Причина:** В ветке `else` (нет распознанных тул-коллов) `last_text = response.text` сохранял текст с тегами. Telegram отклонял с `TelegramBadRequest: Unsupported start tag "tool_call"`.
+
+**Фикс:** `last_text = strip_tool_calls(response.text).strip()` — всегда чистим перед отправкой.
+
+Файл: `agent/react_loop.py`
+
+#### 4. Фикс: search_skills / use_skill инструменты
+**Причина:** `_dispatch()` не обрабатывал `search_skills`/`use_skill` → возвращал "Unknown tool". Дублирующая сломанная секция в цикле использовала несуществующую переменную `tool_args`.
+
+**Фикс:**
+- Добавлены обработчики в `_dispatch()`
+- Сломанная post-execution секция skills удалена из цикла
+- Остался только `propose_plan` return и `_emit_tool_specific`
+
+Файл: `agent/react_loop.py`
+
+#### 5. Фикс: init_db синтаксические баги
+- `skill_stats` CREATE TABLE был вне `async with db:` блока → ошибка при старте
+- `system_prompt.py`: двойная запятая в сигнатуре `build_system_prompt()`
+- Оба исправлены
+
+#### 6. Улучшенные сообщения об ошибках сессий
+**Причина:** "too many values to unpack (expected 5)" — сессия создана с другим клиентом (не Telethon), структура таблицы `sessions` отличается.
+
+**Фикс:** В `_get_client()` перехватываем `ValueError` с "unpack" и показываем понятное сообщение с инструкцией.
+
+Файл: `tools/tg_tools.py`
+
+#### 7. Правило 13 в CRITICAL_RULES
+Запрет прямого доступа к SQLite из агента (причина краша: агент пытался `SELECT *` из accounts таблицы и распаковывал в tuple с 5 полями, а там 13).
+
+Файл: `agent/system_prompt.py`
+
+---
+
 ## Известные баги / TODO
 - [x] ~~Модель по умолчанию для OpenRouter нужно обновить~~ — обновлена на deepseek-r1-0528:free
 - [x] ~~При создании чата — показывать список доступных моделей провайдера~~ — браузер ncm: интегрирован
 - [x] ~~Редактирование настроек существующего чата~~ — chat_edit.py, кнопка ✏️ Изменить
-- [ ] История сообщений чата (сейчас только FSM state, нет персистентного хранения)
+- [x] ~~История сообщений чата~~ — history_db.py, персистентна между перезапусками
+- [x] ~~Статус-блок не всегда последний~~ — _with_anim helper в chat.py
+- [x] ~~`<tool_call>` теги в сообщениях~~ — strip_tool_calls(last_text) в react_loop.py
+- [x] ~~search_skills/use_skill не работали~~ — добавлены в _dispatch()
+- [ ] Кнопка "🧹 Очистить историю" в деталях чата (история растёт бесконечно)
 - [ ] Экспорт/импорт настроек чата (backup api_key + model)
 - [x] ~~Блок статуса "Thinking" никогда не менялся~~ — исправлено (animator fix)
 - [x] ~~Глобальные API ключи в .env~~ — убраны, теперь per-chat

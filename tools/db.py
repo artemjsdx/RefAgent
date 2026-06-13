@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 async def init_db() -> None:
     """Создать таблицы при первом запуске. Безопасно вызывать повторно."""
     from tools.chat_db import CHATS_SCHEMA
+    from tools.history_db import HISTORY_SCHEMA
     SESSIONS_DB.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(SESSIONS_DB) as db:
         # WAL режим: параллельные читатели не блокируют писателя
@@ -75,20 +76,21 @@ async def init_db() -> None:
         await db.execute("PRAGMA busy_timeout=5000;")
         await db.executescript(SCHEMA)
         await db.executescript(CHATS_SCHEMA)
+        await db.executescript(HISTORY_SCHEMA)
         # Миграция: добавить chat_id если ещё нет (для существующих БД)
         try:
             await db.execute("ALTER TABLE accounts ADD COLUMN chat_id INTEGER")
         except Exception:
             pass  # колонка уже есть
-    # ── Skills stats (source of truth = data/skills/*.md) ──────────────────
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS skill_stats (
-            name       TEXT PRIMARY KEY,
-            used_count INTEGER NOT NULL DEFAULT 0,
-            last_used  TEXT
-        )
-    """)
-    await db.commit()
+        # ── Skills stats ──────────────────────────────────────────────────
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS skill_stats (
+                name       TEXT PRIMARY KEY,
+                used_count INTEGER NOT NULL DEFAULT 0,
+                last_used  TEXT
+            )
+        """)
+        await db.commit()
 
 
 async def session_path_exists(session_path: str) -> bool:
