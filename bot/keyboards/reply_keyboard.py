@@ -14,8 +14,9 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 # ТЕКСТЫ КНОПОК (константы для reply_handler)
 # ════════════════════════════════════════════════════
 
-BTN_WRITE_TASK  = "📝 Написать задачу"
-BTN_MY_CHATS    = "💬 Мои чаты"
+BTN_WRITE_TASK     = "📝 Написать задачу"
+BTN_MY_CHATS       = "💬 Мои чаты"
+BTN_CLEAR_HISTORY  = "🧹 Очистить историю"
 
 BTN_STOP        = "⛔ Остановить"
 BTN_STOP_WRITE  = "✏️ Стоп + написать"
@@ -34,6 +35,7 @@ def idle_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_WRITE_TASK), KeyboardButton(text=BTN_MY_CHATS)],
+            [KeyboardButton(text=BTN_CLEAR_HISTORY)],
         ],
         resize_keyboard   = True,
         one_time_keyboard = False,

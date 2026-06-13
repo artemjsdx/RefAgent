@@ -21,11 +21,11 @@ import asyncio
 import logging
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from bot.keyboards.reply_keyboard import (
-    BTN_WRITE_TASK, BTN_MY_CHATS,
+    BTN_WRITE_TASK, BTN_MY_CHATS, BTN_CLEAR_HISTORY,
     BTN_STOP, BTN_STOP_WRITE,
     BTN_PLAN_RUN, BTN_PLAN_EDIT, BTN_PLAN_CANCEL,
     idle_keyboard, running_keyboard,
@@ -72,6 +72,74 @@ async def reply_write_task(message: Message, state: FSMContext) -> None:
     await message.reply(
         "📝 Напиши задачу — реф ссылку, условия зачисления, количество аккаунтов.",
         reply_markup = idle_keyboard(),
+    )
+
+
+@router.message(F.text == BTN_CLEAR_HISTORY)
+async def reply_clear_history(message: Message, state: FSMContext) -> None:
+    """Кнопка "🧹 Очистить историю" — показать подтверждение с инфо о чате."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from tools.history_db import get_message_count
+    from tools.chat_db import PROVIDER_LABELS, PROVIDER_EMOJIS
+
+    data    = await state.get_data()
+    chat_id = data.get("active_chat_id")
+
+    if not chat_id:
+        await message.reply(
+            "💬 <b>Чат не выбран</b>\n\nОткрой чат чтобы очистить его историю.",
+            parse_mode   = "HTML",
+            reply_markup = idle_keyboard(),
+        )
+        return
+
+    from tools.chat_db import get_chat
+    chat = await get_chat(chat_id)
+    if not chat:
+        await message.reply("⚠️ Чат не найден.", reply_markup=idle_keyboard())
+        return
+
+    count    = await get_message_count(chat_id)
+    emoji    = PROVIDER_EMOJIS.get(chat.provider, "🤖")
+    label    = PROVIDER_LABELS.get(chat.provider, chat.provider)
+    model    = chat.model or "по умолчанию"
+
+    # Пояснение зачем это нужно — зависит от провайдера
+    provider_notes = {
+        "openrouter":  "OpenRouter — чем длиннее история, тем дороже запрос (платные модели).",
+        "bai":         "b.ai — история влияет на контекст. Free plan имеет ограниченный context window.",
+        "favoriteapi": "FavoriteAPI — очистка уменьшит размер контекста, отправляемого в API.",
+    }
+    note = provider_notes.get(chat.provider, "Очистка уменьшит контекст, отправляемый в LLM.")
+
+    if count == 0:
+        await message.answer(
+            f"💬 <b>{chat.name}</b>  {emoji} {label}\n\n"
+            "📭 История уже пуста — нечего очищать.",
+            parse_mode   = "HTML",
+            reply_markup = idle_keyboard(),
+        )
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"✅ Да, очистить ({count} сообщ.)", callback_data=f"hist:confirm:{chat_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отмена", callback_data="hist:cancel"),
+        ],
+    ])
+
+    await message.answer(
+        f"🧹 <b>Очистить историю?</b>\n\n"
+        f"💬 Чат: <b>{chat.name}</b>\n"
+        f"{emoji} Провайдер: <b>{label}</b>\n"
+        f"🧠 Модель: <b>{model}</b>\n"
+        f"📨 Сообщений: <b>{count}</b>\n\n"
+        f"<i>{note}</i>\n\n"
+        f"⚠️ Агент забудет всю переписку и начнёт с чистого листа.",
+        parse_mode   = "HTML",
+        reply_markup = kb,
     )
 
 
@@ -208,3 +276,41 @@ async def reply_plan_cancel(message: Message, state: FSMContext) -> None:
     await plan_manager.cancel()
     await state.set_state(ChatStates.dialog)
     await message.reply("❌ Задача отменена.", reply_markup=idle_keyboard())
+
+
+# ════════════════════════════════════════════════════
+# INLINE CALLBACKS — очистка истории
+# ════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("hist:confirm:"))
+async def cb_hist_confirm(query: CallbackQuery) -> None:
+    """✅ Подтверждение очистки истории чата."""
+    from tools.history_db import clear_history
+    from tools.chat_db import get_chat, PROVIDER_EMOJIS, PROVIDER_LABELS
+
+    chat_id = int(query.data.split(":")[-1])
+    deleted = await clear_history(chat_id)
+
+    chat  = await get_chat(chat_id)
+    name  = chat.name if chat else f"#{chat_id}"
+    emoji = PROVIDER_EMOJIS.get(chat.provider, "🤖") if chat else "🤖"
+    label = PROVIDER_LABELS.get(chat.provider, chat.provider) if chat else ""
+
+    await query.message.edit_text(
+        f"✅ <b>История очищена</b>\n\n"
+        f"💬 Чат: <b>{name}</b>  {emoji} {label}\n"
+        f"🗑 Удалено сообщений: <b>{deleted}</b>\n\n"
+        f"Агент начинает с чистого листа — предыдущий контекст больше не отправляется в LLM.",
+        parse_mode = "HTML",
+    )
+    await query.answer("История очищена ✅")
+
+
+@router.callback_query(F.data == "hist:cancel")
+async def cb_hist_cancel(query: CallbackQuery) -> None:
+    """❌ Отмена очистки — удалить панель."""
+    try:
+        await query.message.delete()
+    except Exception:
+        await query.message.edit_text("Отменено.")
+    await query.answer("Отменено")
