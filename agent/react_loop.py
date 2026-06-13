@@ -63,9 +63,37 @@ TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 
 
 def parse_tool_calls_from_text(text: str) -> list[dict]:
+    """
+    Parse <tool_call>...</tool_call> blocks from model text output.
+
+    Handles two tag styles:
+      Standard:  <tool_call>JSON</tool_call>
+      Kimi-style: <tool_call>JSON<tool_call>  (uses opening tag as separator)
+    """
     results = []
-    for m in TOOL_CALL_RE.finditer(text):
-        raw = m.group(1).strip()
+
+    # Try standard </tool_call> format first
+    standard = TOOL_CALL_RE.findall(text)
+    if standard:
+        for raw in standard:
+            raw = raw.strip()
+            try:
+                data = json.loads(raw)
+                if "name" in data:
+                    results.append({
+                        "name":      data["name"],
+                        "arguments": data.get("arguments", {}),
+                    })
+            except json.JSONDecodeError:
+                log.warning(f"[ReAct] Bad tool_call JSON: {raw[:100]}")
+        return results
+
+    # Fallback: kimi-style — split by <tool_call> tag
+    parts = text.split("<tool_call>")
+    for part in parts[1:]:   # skip text before first <tool_call>
+        raw = part.replace("</tool_call>", "").strip()
+        if not raw or not raw.startswith("{"):
+            continue
         try:
             data = json.loads(raw)
             if "name" in data:
@@ -74,12 +102,20 @@ def parse_tool_calls_from_text(text: str) -> list[dict]:
                     "arguments": data.get("arguments", {}),
                 })
         except json.JSONDecodeError:
-            log.warning(f"[ReAct] Bad tool_call JSON: {raw[:100]}")
+            log.warning(f"[ReAct] Bad tool_call JSON (kimi): {raw[:100]}")
+
     return results
 
 
 def strip_tool_calls(text: str) -> str:
-    return TOOL_CALL_RE.sub("", text).strip()
+    """Remove all <tool_call> blocks (both standard and kimi-style)."""
+    # Remove standard format first
+    text = TOOL_CALL_RE.sub("", text)
+    # Remove kimi-style: everything from first remaining <tool_call> onward
+    idx = text.find("<tool_call>")
+    if idx >= 0:
+        text = text[:idx]
+    return text.strip()
 
 
 # ════════════════════════════════════════════════════
