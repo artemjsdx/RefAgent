@@ -11,13 +11,16 @@ from tools.chat_db import ChatRecord, PROVIDER_LABELS, PROVIDER_EMOJIS, fmt_ts
 # CALLBACK CONSTANTS
 # ════════════════════════════════════════════════════
 
-CB_NEW_CHAT       = "chat:new"
-CB_CHAT_LIST      = "chat:list"
-CB_CHAT_OPEN      = "chat:open:"         # + chat_id
-CB_CHAT_DELETE    = "chat:delete:"       # + chat_id
-CB_CHAT_CONFIRM   = "chat:confirm_del:"  # + chat_id
-CB_CHAT_BACK_LIST = "chat:back_list"
-CB_CHAT_EDIT      = "chat:edit:"         # + chat_id
+CB_NEW_CHAT          = "chat:new"
+CB_CHAT_LIST         = "chat:list"
+CB_CHAT_OPEN         = "chat:open:"              # + chat_id
+CB_CHAT_DELETE       = "chat:delete:"            # + chat_id
+CB_CHAT_CONFIRM      = "chat:confirm_del:"       # + chat_id
+CB_CHAT_BACK_LIST    = "chat:back_list"
+CB_CHAT_EDIT         = "chat:edit:"              # + chat_id
+CB_CHAT_CLEAR_HIST   = "chat:clear_hist:"        # + chat_id
+CB_CHAT_CONFIRM_HIST = "chat:confirm_hist:"      # + chat_id
+CB_CHAT_EXPORT       = "chat:export:"            # + chat_id
 
 CB_PROV_OR  = "newchat:prov:openrouter"
 CB_PROV_FA  = "newchat:prov:favoriteapi"
@@ -83,12 +86,16 @@ def chat_list_keyboard(chats: list[ChatRecord]) -> InlineKeyboardMarkup:
 def chat_detail_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="💬 Открыть",     callback_data=f"{CB_CHAT_OPEN}{chat_id}:enter"),
-            InlineKeyboardButton(text="✏️ Изменить",    callback_data=f"{CB_CHAT_EDIT}{chat_id}"),
+            InlineKeyboardButton(text="💬 Открыть",      callback_data=f"{CB_CHAT_OPEN}{chat_id}:enter"),
+            InlineKeyboardButton(text="✏️ Изменить",     callback_data=f"{CB_CHAT_EDIT}{chat_id}"),
         ],
         [
-            InlineKeyboardButton(text="🗑 Удалить",     callback_data=f"{CB_CHAT_DELETE}{chat_id}"),
-            InlineKeyboardButton(text="◀️ К списку",   callback_data=CB_CHAT_BACK_LIST),
+            InlineKeyboardButton(text="🧹 Очистить историю", callback_data=f"{CB_CHAT_CLEAR_HIST}{chat_id}"),
+            InlineKeyboardButton(text="📤 Экспорт",      callback_data=f"{CB_CHAT_EXPORT}{chat_id}"),
+        ],
+        [
+            InlineKeyboardButton(text="🗑 Удалить",      callback_data=f"{CB_CHAT_DELETE}{chat_id}"),
+            InlineKeyboardButton(text="◀️ К списку",    callback_data=CB_CHAT_BACK_LIST),
         ],
     ])
 
@@ -97,6 +104,15 @@ def confirm_delete_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Да, удалить",   callback_data=f"{CB_CHAT_CONFIRM}{chat_id}"),
+            InlineKeyboardButton(text="❌ Отмена",        callback_data=f"{CB_CHAT_OPEN}{chat_id}"),
+        ],
+    ])
+
+
+def confirm_clear_hist_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, очистить",  callback_data=f"{CB_CHAT_CONFIRM_HIST}{chat_id}"),
             InlineKeyboardButton(text="❌ Отмена",        callback_data=f"{CB_CHAT_OPEN}{chat_id}"),
         ],
     ])
