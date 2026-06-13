@@ -2,24 +2,29 @@
 chat_list.py — Просмотр и управление LLM-чатами.
 
 Показывает список именованных чатов пользователя.
-Позволяет открыть, удалить чат.
+Позволяет открыть, удалить, очистить историю и экспортировать чат.
 """
 
 from __future__ import annotations
 
+import io
+import json
 import logging
 
 from aiogram import Router, F, Bot
-from aiogram.types import CallbackQuery
+from aiogram.types import BufferedInputFile, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from bot.keyboards.chat_keyboards import (
     CB_CHAT_LIST, CB_CHAT_BACK_LIST,
     CB_CHAT_OPEN, CB_CHAT_DELETE, CB_CHAT_CONFIRM,
-    chat_list_keyboard, chat_detail_keyboard, confirm_delete_keyboard,
+    CB_CHAT_CLEAR_HIST, CB_CHAT_CONFIRM_HIST, CB_CHAT_EXPORT,
+    chat_list_keyboard, chat_detail_keyboard,
+    confirm_delete_keyboard, confirm_clear_hist_keyboard,
 )
 from bot.keyboards.reply_keyboard import idle_keyboard
 from tools.chat_db import get_user_chats, get_chat, delete_chat, touch_chat, PROVIDER_LABELS, PROVIDER_EMOJIS, fmt_ts
+from tools.history_db import clear_history, get_message_count
 
 log    = logging.getLogger(__name__)
 router = Router()
@@ -173,3 +178,91 @@ async def cb_chat_confirm_delete(query: CallbackQuery, state: FSMContext) -> Non
             parse_mode   = "HTML",
             reply_markup = chat_list_keyboard(chats),
         )
+
+
+# ════════════════════════════════════════════════════
+# ОЧИСТКА ИСТОРИИ
+# ════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith(CB_CHAT_CLEAR_HIST))
+async def cb_clear_hist(query: CallbackQuery) -> None:
+    chat_id = int(query.data[len(CB_CHAT_CLEAR_HIST):])
+    chat    = await get_chat(chat_id)
+    if not chat:
+        await query.answer("Чат не найден", show_alert=True)
+        return
+
+    count = await get_message_count(chat_id)
+    await query.message.edit_text(
+        f"🧹 <b>Очистить историю «{chat.name}»?</b>\n\n"
+        f"В истории {count} сообщений. После очистки агент забудет весь контекст диалога.\n\n"
+        "Отменить нельзя.",
+        parse_mode   = "HTML",
+        reply_markup = confirm_clear_hist_keyboard(chat_id),
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith(CB_CHAT_CONFIRM_HIST))
+async def cb_confirm_clear_hist(query: CallbackQuery) -> None:
+    chat_id = int(query.data[len(CB_CHAT_CONFIRM_HIST):])
+    chat    = await get_chat(chat_id)
+    if not chat:
+        await query.answer("Чат не найден", show_alert=True)
+        return
+
+    deleted = await clear_history(chat_id)
+    await query.answer(f"История очищена ({deleted} сообщений)", show_alert=False)
+
+    # Вернуться к деталям чата
+    emoji = PROVIDER_EMOJIS.get(chat.provider, "🤖")
+    label = PROVIDER_LABELS.get(chat.provider, chat.provider)
+    await query.message.edit_text(
+        f"💬 <b>{chat.name}</b>\n\n"
+        f"{emoji} Провайдер: <b>{label}</b>\n"
+        f"🧠 Модель: <b>{chat.model or 'по умолчанию'}</b>\n"
+        f"📅 Создан: {fmt_ts(chat.created_at)}\n"
+        f"🕐 Последний вход: {fmt_ts(chat.last_used)}\n\n"
+        f"✅ История очищена ({deleted} сообщений удалено).",
+        parse_mode   = "HTML",
+        reply_markup = chat_detail_keyboard(chat_id),
+    )
+
+
+# ════════════════════════════════════════════════════
+# ЭКСПОРТ ЧАТА
+# ════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith(CB_CHAT_EXPORT))
+async def cb_export_chat(query: CallbackQuery, bot: Bot) -> None:
+    chat_id = int(query.data[len(CB_CHAT_EXPORT):])
+    chat    = await get_chat(chat_id)
+    if not chat:
+        await query.answer("Чат не найден", show_alert=True)
+        return
+
+    export_data = {
+        "refagent_chat_export": True,
+        "version":   1,
+        "name":      chat.name,
+        "provider":  chat.provider,
+        "api_key":   chat.api_key,
+        "api_url":   chat.api_url,
+        "model":     chat.model,
+    }
+
+    json_bytes  = json.dumps(export_data, ensure_ascii=False, indent=2).encode("utf-8")
+    safe_name   = "".join(c if c.isalnum() or c in "-_" else "_" for c in chat.name)
+    filename    = f"chat_{safe_name}.json"
+
+    await query.answer("Готовлю экспорт...", show_alert=False)
+    await bot.send_document(
+        chat_id  = query.message.chat.id,
+        document = BufferedInputFile(json_bytes, filename=filename),
+        caption  = (
+            f"📤 <b>Экспорт чата «{chat.name}»</b>\n\n"
+            "Файл содержит API ключ — храни его в безопасности.\n"
+            "Для импорта отправь этот файл боту."
+        ),
+        parse_mode = "HTML",
+    )
