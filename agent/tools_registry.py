@@ -326,14 +326,6 @@ TOOL_DEFS: list[dict[str, Any]] = [
               "required": ["name"],
           },
       },
-            parameters  = {
-              "type": "object",
-              "properties": {
-                  "name": {"type": "string", "description": "Slug навыка (например: warmup_accounts)"},
-              },
-              "required": ["name"],
-          },
-      ),
 ]
 
 

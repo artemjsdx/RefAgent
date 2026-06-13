@@ -149,20 +149,61 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
     if _animator:
         anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
 
-    from agent.status_event import StatusEvent
-    from agent.status_event import KIND_THOUGHT as _KIND_THOUGHT
+    from agent.status_event import StatusEvent, KIND_THOUGHT as _KIND_THOUGHT, KIND_TOOL_CALL as _KIND_TOOL_CALL
 
-    async def _dialog_log_cb(event: StatusEvent) -> None:
-        if event.kind != _KIND_THOUGHT:
-            return
-        raw = event.data.get("text", "").strip()
-        if not raw:
-            return
+    # Маппинг тул → тип анимации (тот же что в _start_agent_task)
+    _DIALOG_TOOL_ANIM: dict[str, str | None] = {
+        "connect_account":        "connecting",
+        "disconnect_account":     "working",
+        "join_channel":           "joining",
+        "conductor_join_group":   "joining",
+        "start_bot":              "working",
+        "send_message":           "sending",
+        "get_messages":           "reading",
+        "wait_bot_response":      "reading",
+        "get_inline_button_urls": "reading",
+        "click_button":           "working",
+        "search_library":         "searching",
+        "search_skills":          "searching",
+        "use_skill":              "searching",
+        "write_library":          "saving",
+        "load_sessions":          "scanning",
+        "list_accounts":          "scanning",
+        "conductor_setup":        "connecting",
+        "conductor_cleanup":      "working",
+        "execute_command":        "working",
+        "run_temp_script":        "working",
+        "propose_plan":           "planning",
+        "sleep_seconds":          None,
+    }
+
+    async def _dialog_switch_anim(action: str) -> None:
         if _animator and anim["msg_id"]:
-            await _animator.finalize(tg_chat_id, anim["msg_id"], f"💭 {raw[:500]}")
+            await _animator.stop_only(anim["msg_id"])
+            try:
+                await bot.delete_message(tg_chat_id, anim["msg_id"])
+            except Exception:
+                pass
             anim["msg_id"] = None
         if _animator:
-            anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
+            anim["msg_id"] = await _animator.start(tg_chat_id, action)
+
+    async def _dialog_log_cb(event: StatusEvent) -> None:
+        k = event.kind
+        if k == _KIND_TOOL_CALL:
+            tool      = event.data.get("tool", "")
+            anim_type = _DIALOG_TOOL_ANIM.get(tool, "working")
+            if anim_type is not None:
+                await _dialog_switch_anim(anim_type)
+        elif k == _KIND_THOUGHT:
+            raw = event.data.get("text", "").strip()
+            if not raw:
+                return
+            if _animator and anim["msg_id"]:
+                await _animator.finalize(tg_chat_id, anim["msg_id"], f"💭 {raw[:500]}")
+                anim["msg_id"] = None
+            if _animator:
+                anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
 
     try:
         react  = ReactLoop(provider=provider, log_cb=_dialog_log_cb, bot=bot)
@@ -365,10 +406,49 @@ async def _start_agent_task(
 
     run_anim = {"msg_id": None}
 
-    # ── Animator helper — статус-блок ВСЕГДА последним ─────────────────
+    # Какой тип анимации запускать для каждого тула
+    _TOOL_ANIM: dict[str, str | None] = {
+        "connect_account":        "connecting",
+        "disconnect_account":     "working",
+        "join_channel":           "joining",
+        "conductor_join_group":   "joining",
+        "start_bot":              "working",
+        "send_message":           "sending",
+        "get_messages":           "reading",
+        "wait_bot_response":      "reading",
+        "get_inline_button_urls": "reading",
+        "click_button":           "working",
+        "search_library":         "searching",
+        "search_skills":          "searching",
+        "use_skill":              "searching",
+        "write_library":          "saving",
+        "load_sessions":          "scanning",
+        "list_accounts":          "scanning",
+        "conductor_setup":        "connecting",
+        "conductor_cleanup":      "working",
+        "execute_command":        "working",
+        "run_temp_script":        "working",
+        "propose_plan":           "planning",
+        "sleep_seconds":          None,   # не переключаем — счётчик сам
+    }
+
+    # ── Animator helpers ─────────────────────────────────────────────────
+
+    async def _switch_anim(action: str) -> None:
+        """Переключить тип аниматора без отправки постоянного сообщения."""
+        if _animator and run_anim["msg_id"]:
+            await _animator.stop_only(run_anim["msg_id"])
+            try:
+                await bot.delete_message(chat_id, run_anim["msg_id"])
+            except Exception:
+                pass
+            run_anim["msg_id"] = None
+        if _animator:
+            run_anim["msg_id"] = await _animator.start(chat_id, action)
+
     async def _with_anim(coro, terminal: bool = False) -> None:
         """
-        Остановить аниматор → отправить сообщение → перезапустить аниматор.
+        Остановить аниматор → отправить постоянное сообщение → перезапустить.
         terminal=True — не перезапускать (конечное событие: STOP, завершение).
         """
         if _animator and run_anim["msg_id"]:
@@ -386,8 +466,17 @@ async def _start_agent_task(
         k = event.kind
         d = event.data
         try:
-            if k in (KIND_THINKING, KIND_TOOL_CALL, KIND_TOOL_RESULT, KIND_DONE):
-                pass  # не показываем сырые tool events в чате
+            if k == KIND_THINKING:
+                # Новая итерация LLM — возвращаем Thinking
+                await _switch_anim("thinking")
+            elif k == KIND_TOOL_CALL:
+                # Переключаем аниматор на тип вызываемого тула
+                tool      = d.get("tool", "")
+                anim_type = _TOOL_ANIM.get(tool, "working")
+                if anim_type is not None:
+                    await _switch_anim(anim_type)
+            elif k in (KIND_TOOL_RESULT, KIND_DONE):
+                pass  # не отображаем — следующий THINKING/THOUGHT обновит
             elif k == KIND_THOUGHT:
                 await _with_anim(send_thought(bot, chat_id, d.get("text", "")))
             elif k == KIND_STEP:
