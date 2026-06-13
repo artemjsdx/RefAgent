@@ -314,8 +314,10 @@ class ReactLoop:
         user_message:     str,
         plan_steps:       Optional[list[str]] = None,
         initial_messages: Optional[list[Message]] = None,
+        session_dir:      Optional[str] = None,
     ) -> str:
-        self._chat_id = chat_id          # store for countdown
+        self._chat_id    = chat_id          # store for countdown
+        self._session_dir = session_dir
         agent_state.set_active(True, chat_id)
         self._stop_event.clear()
         try:
@@ -332,8 +334,9 @@ class ReactLoop:
         initial_messages: Optional[list[Message]] = None,
     ) -> str:
         sys_prompt = build_system_prompt(
-            provider   = "favoriteapi" if self._is_favoriteapi else "openrouter",
-            plan_steps = plan_steps,
+            provider    = "favoriteapi" if self._is_favoriteapi else "openrouter",
+            plan_steps  = plan_steps,
+            session_dir = getattr(self, "_session_dir", None),
         )
         self._history = [
             Message(role="system", content=sys_prompt),

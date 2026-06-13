@@ -117,9 +117,19 @@ async def _load_llm_history(chat_record_id: int, limit: int = 20) -> list[LLMMes
 
 @router.message(ChatStates.dialog)
 async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -> None:
+    global _loop, _task
+
     chat = await _load_active_chat(state)
     if not chat:
         await _no_chat_reply(message)
+        return
+
+    if agent_state.is_active:
+        await message.reply(
+            "⚙️ Агент уже работает. Нажми <b>⛔ Остановить</b> чтобы прервать.",
+            parse_mode   = "HTML",
+            reply_markup = running_keyboard(),
+        )
         return
 
     try:
@@ -134,6 +144,8 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
         return
 
     tg_chat_id = message.chat.id
+    user_tg_id = message.from_user.id if message.from_user else tg_chat_id
+    session_dir = f"/storage/emulated/0/Хранилище/Project/RefAgent/{user_tg_id}/{chat.id}/"
 
     # Прикреплённые файлы из sandbox этого чата
     pending = pop_files(chat.id)
@@ -145,13 +157,16 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
     # Загрузить историю из БД для этого чата
     initial_messages = await _load_llm_history(chat.id)
 
+    # Сразу переключаемся в running — показываем кнопку ⛔ Остановить
+    await state.set_state(ChatStates.running)
+    await message.answer("⚙️ Агент работает...", reply_markup=running_keyboard())
+
     anim = {"msg_id": None}
     if _animator:
         anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
 
     from agent.status_event import StatusEvent, KIND_THOUGHT as _KIND_THOUGHT, KIND_TOOL_CALL as _KIND_TOOL_CALL
 
-    # Маппинг тул → тип анимации (тот же что в _start_agent_task)
     _DIALOG_TOOL_ANIM: dict[str, str | None] = {
         "connect_account":        "connecting",
         "disconnect_account":     "working",
@@ -188,7 +203,7 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
         if _animator:
             anim["msg_id"] = await _animator.start(tg_chat_id, action)
 
-    async def _dialog_log_cb(event: StatusEvent) -> None:
+    async def _dialog_log_cb(event: "StatusEvent") -> None:
         k = event.kind
         if k == _KIND_TOOL_CALL:
             tool      = event.data.get("tool", "")
@@ -205,18 +220,57 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
             if _animator:
                 anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
 
-    try:
-        react  = ReactLoop(provider=provider, log_cb=_dialog_log_cb, bot=bot)
-        result = await react.run(
-            chat_id          = tg_chat_id,
-            user_message     = user_text,
-            initial_messages = initial_messages,
-        )
+    # "done" | "plan" | "cancelled" | "error"
+    _outcome: dict[str, str] = {"v": "done"}
 
-        if result.startswith("__plan_proposed__"):
-            plan_data = json.loads(result[len("__plan_proposed__"):] or "{}")
-            plan_text = plan_data.get("plan_text", "")
+    async def _run() -> None:
+        global _loop
+        try:
+            react = ReactLoop(provider=provider, log_cb=_dialog_log_cb, bot=bot)
+            _loop = react
+            result = await react.run(
+                chat_id          = tg_chat_id,
+                user_message     = user_text,
+                initial_messages = initial_messages,
+                session_dir      = session_dir,
+            )
 
+            if result.startswith("__plan_proposed__"):
+                _outcome["v"] = "plan"
+                plan_data = json.loads(result[len("__plan_proposed__"):] or "{}")
+                plan_text = plan_data.get("plan_text", "")
+
+                if _animator and anim["msg_id"]:
+                    await _animator.stop_only(anim["msg_id"])
+                    try:
+                        await bot.delete_message(tg_chat_id, anim["msg_id"])
+                    except Exception:
+                        pass
+                    anim["msg_id"] = None
+
+                await state.set_state(ChatStates.awaiting_run)
+                await bot.send_message(
+                    tg_chat_id,
+                    plan_text + "\n\n<i>Подтверди план для запуска.</i>",
+                    parse_mode   = "HTML",
+                    reply_markup = plan_keyboard(),
+                )
+                await bot.send_message(tg_chat_id, "🚀 Запустить план?",
+                                       reply_markup=plan_confirm_keyboard())
+                from tools.history_db import save_pair
+                await save_pair(chat.id, user_text, plan_text)
+
+            else:
+                if _animator and anim["msg_id"]:
+                    await _animator.finalize(tg_chat_id, anim["msg_id"], result)
+                    anim["msg_id"] = None
+                else:
+                    await bot.send_message(tg_chat_id, result, parse_mode="HTML")
+                from tools.history_db import save_pair
+                await save_pair(chat.id, user_text, result)
+
+        except asyncio.CancelledError:
+            _outcome["v"] = "cancelled"
             if _animator and anim["msg_id"]:
                 await _animator.stop_only(anim["msg_id"])
                 try:
@@ -225,35 +279,32 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
                     pass
                 anim["msg_id"] = None
 
-            await state.set_state(ChatStates.awaiting_run)
-            await message.answer(
-                plan_text + "\n\n<i>Подтверди план для запуска.</i>",
-                parse_mode   = "HTML",
-                reply_markup = plan_keyboard(),
-            )
-            await message.answer(
-                "🚀 Запустить план?",
-                reply_markup = plan_confirm_keyboard(),
-            )
-            # Сохранить обмен в историю (план = ответ ассистента)
-            from tools.history_db import save_pair
-            await save_pair(chat.id, user_text, plan_text)
-        else:
+        except Exception as e:
+            _outcome["v"] = "error"
+            log.exception(f"[Chat] Ошибка диалога: {e}")
             if _animator and anim["msg_id"]:
-                await _animator.finalize(tg_chat_id, anim["msg_id"], result)
+                await _animator.finalize(tg_chat_id, anim["msg_id"], f"❌ Ошибка: {e}")
+                anim["msg_id"] = None
             else:
-                await message.answer(result, parse_mode="HTML", reply_markup=idle_keyboard())
+                await bot.send_message(tg_chat_id, f"❌ Ошибка: {e}")
 
-            # Сохранить обмен в историю
-            from tools.history_db import save_pair
-            await save_pair(chat.id, user_text, result)
+        finally:
+            agent_state.set_active(False)
+            oc = _outcome["v"]
+            if oc == "plan":
+                pass  # state = awaiting_run, plan_keyboard уже показана
+            elif oc == "cancelled":
+                pass  # reply_stop уже отправил idle_keyboard + stopped state
+            else:
+                # "done" или "error" — возвращаем в dialog
+                await state.set_state(ChatStates.dialog)
+                try:
+                    txt = "✅ Готово." if oc == "done" else "⚠️ Возникла ошибка. Можешь написать снова."
+                    await bot.send_message(tg_chat_id, txt, reply_markup=idle_keyboard())
+                except Exception:
+                    pass
 
-    except Exception as e:
-        log.exception(f"[Chat] Ошибка диалога: {e}")
-        if _animator and anim["msg_id"]:
-            await _animator.finalize(tg_chat_id, anim["msg_id"], f"❌ Ошибка: {e}")
-        else:
-            await message.reply(f"❌ Ошибка: {e}", reply_markup=idle_keyboard())
+    _task = asyncio.create_task(_run())
 
 
 # ════════════════════════════════════════════════════

@@ -112,6 +112,7 @@ def build_system_prompt(provider:       str                 = "openrouter",   # 
     library_hint:   Optional[str]       = None,
     extra_context:  Optional[str]       = None,
     skills_context: str = "",
+    session_dir:    Optional[str]       = None,
 ) -> str:
     """
     Собрать полный системный промпт.
@@ -120,8 +121,23 @@ def build_system_prompt(provider:       str                 = "openrouter",   # 
     plan_steps:    текущий план задачи (если запущена)
     library_hint:  релевантная запись из библиотеки знаний
     extra_context: дополнительный контекст (состояние аккаунтов и т.п.)
+    session_dir:   папка с сессиями и файлами пользователя (per-user/per-chat)
     """
     parts: list[str] = [CRITICAL_RULES, ROLE_DESCRIPTION]
+
+    # Папка сессий — если передана, вставляем сразу после правил
+    if session_dir:
+        parts.insert(1, (
+            f"## 📁 Хранилище сессий и файлов\n\n"
+            f"Все Telethon `.session`-файлы и прикреплённые пользователем файлы хранятся **ТОЛЬКО** в:\n"
+            f"```\n{session_dir}\n```\n"
+            f"**Правила:**\n"
+            f"- Никогда не запускай `find /`, `find ~`, `find .` или любой другой поиск по всей файловой системе.\n"
+            f"- Ищи сессии ТОЛЬКО в этой папке: `ls {session_dir}` или `ls {session_dir}*.session`.\n"
+            f"- Если папка пуста или не существует — сообщи пользователю: «Скопируй `.session`-файлы в папку `{session_dir}`».\n"
+            f"- Не угадывай пути — не лезь в `/home`, `/root`, `/tmp`, `/data`, `uploads/` и другие директории.\n"
+            f"- Для загрузки сессий используй `load_sessions` — он автоматически сканирует нужную папку."
+        ))
 
     # Текстовые инструменты — только для FavoriteAPI (у OpenRouter нативный tool calling)
     if provider == "favoriteapi":
