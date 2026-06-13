@@ -119,6 +119,10 @@ async def _load_llm_history(chat_record_id: int, limit: int = 20) -> list[LLMMes
 async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -> None:
     global _loop, _task
 
+    # Команды (/start, /help и т.д.) не обрабатываем здесь — пусть идут дальше
+    if message.text and message.text.startswith("/"):
+        return
+
     chat = await _load_active_chat(state)
     if not chat:
         await _no_chat_reply(message)
@@ -161,7 +165,8 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
     await state.set_state(ChatStates.running)
     await message.answer("⚙️ Агент работает...", reply_markup=running_keyboard())
 
-    anim = {"msg_id": None}
+    anim    = {"msg_id": None}
+    _flags  = {"stopped": False}   # флаг: задача остановлена, не запускать новые анимации
     if _animator:
         anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
 
@@ -193,6 +198,8 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
     }
 
     async def _dialog_switch_anim(action: str) -> None:
+        if _flags["stopped"]:
+            return
         if _animator and anim["msg_id"]:
             await _animator.stop_only(anim["msg_id"])
             try:
@@ -204,6 +211,8 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
             anim["msg_id"] = await _animator.start(tg_chat_id, action)
 
     async def _dialog_log_cb(event: "StatusEvent") -> None:
+        if _flags["stopped"]:
+            return
         k = event.kind
         if k == _KIND_TOOL_CALL:
             tool      = event.data.get("tool", "")
@@ -271,6 +280,7 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
 
         except asyncio.CancelledError:
             _outcome["v"] = "cancelled"
+            _flags["stopped"] = True   # блокируем все новые анимации от зависших коллбеков
             if _animator and anim["msg_id"]:
                 await _animator.stop_only(anim["msg_id"])
                 try:
