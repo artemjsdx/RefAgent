@@ -220,14 +220,13 @@ async def _ask_model(message: Message, state: FSMContext, provider: str) -> None
         )
     elif provider == "bai":
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🆓 Бесплатные модели",   callback_data=f"{_BCM_FREE}0")],
-            [InlineKeyboardButton(text="💳 Платные модели",      callback_data=f"{_BCM_PAID}0")],
-            [InlineKeyboardButton(text="⌨️ Ввести ID вручную",  callback_data=_BCM_MANUAL)],
+            [InlineKeyboardButton(text="🆓 Free plan",              callback_data=f"{_BCM_FREE}0")],
+            [InlineKeyboardButton(text="💳 Pro plan",               callback_data=f"{_BCM_PAID}0")],
             [InlineKeyboardButton(text="⏭ Пропустить (kimi-k2.5)", callback_data=CB_SKIP_MODEL)],
         ])
         await message.answer(
             "🧠 <b>Выбери модель b.ai</b>\n\n"
-            "Бесплатный план: <code>kimi-k2.5</code>, <code>glm-5</code>, <code>glm-5.1</code>\n"
+            "Free plan: <code>kimi-k2.5</code>, <code>glm-5</code>, <code>glm-5.1</code>\n"
             "По умолчанию: <code>kimi-k2.5</code>",
             parse_mode   = "HTML",
             reply_markup = kb,
@@ -401,29 +400,32 @@ async def cb_bcm_page(query: CallbackQuery, state: FSMContext) -> None:
 
     rows = []
     for m in page_models:
-        price_str = "free" if m.is_free else "paid"
+        price_str = "Free plan" if m.is_free else "Pro plan"
         name = m.name[:28] if len(m.name) > 28 else m.name
         rows.append([InlineKeyboardButton(
             text          = f"{name} [{price_str}]",
             callback_data = f"{_BCM_SELECT}{m.id}",
         )])
 
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="◀", callback_data=f"bcm:{tier}:{page - 1}"))
-    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=_BCM_NOOP))
-    if end < total:
-        nav.append(InlineKeyboardButton(text="▶", callback_data=f"bcm:{tier}:{page + 1}"))
-    if nav:
+    # Навигация — показываем только если страниц больше одной
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀", callback_data=f"bcm:{tier}:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=_BCM_NOOP))
+        if end < total:
+            nav.append(InlineKeyboardButton(text="▶", callback_data=f"bcm:{tier}:{page + 1}"))
         rows.append(nav)
 
-    tier_label = "Бесплатные" if tier == "free" else "Платные"
-    rows.append([InlineKeyboardButton(text="⌨️ Ввести вручную",      callback_data=_BCM_MANUAL)])
+    tier_label = "Free plan" if tier == "free" else "Pro plan"
+    rows.append([InlineKeyboardButton(text="◀️ Назад к выбору тарифа", callback_data="bcm:tierback")])
     rows.append([InlineKeyboardButton(text="⏭ Пропустить (kimi-k2.5)", callback_data=CB_SKIP_MODEL)])
 
+    header = f"🧠 <b>Модели b.ai — {tier_label}</b>\nВсего: {total}"
+    if total_pages > 1:
+        header += f" | Страница {page + 1}/{total_pages}"
     await query.message.edit_text(
-        f"🧠 <b>Модели b.ai — {tier_label}</b>\n"
-        f"Страница {page + 1} из {total_pages} | Всего: {total}",
+        header,
         parse_mode   = "HTML",
         reply_markup = InlineKeyboardMarkup(inline_keyboard=rows),
     )
@@ -456,6 +458,24 @@ async def cb_bcm_manual(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(NewChatStates.waiting_model, F.data == _BCM_NOOP)
 async def cb_bcm_noop(query: CallbackQuery) -> None:
+    await query.answer()
+
+
+@router.callback_query(NewChatStates.waiting_model, F.data == "bcm:tierback")
+async def cb_bcm_tierback(query: CallbackQuery, state: FSMContext) -> None:
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🆓 Free plan",           callback_data=f"{_BCM_FREE}0")],
+        [InlineKeyboardButton(text="💳 Pro plan",            callback_data=f"{_BCM_PAID}0")],
+        [InlineKeyboardButton(text="⏭ Пропустить (kimi-k2.5)", callback_data=CB_SKIP_MODEL)],
+    ])
+    await query.message.edit_text(
+        "🧠 <b>Выбери модель b.ai</b>\n\n"
+        "Free plan: <code>kimi-k2.5</code>, <code>glm-5</code>, <code>glm-5.1</code>\n"
+        "По умолчанию: <code>kimi-k2.5</code>",
+        parse_mode   = "HTML",
+        reply_markup = kb,
+    )
     await query.answer()
 
 

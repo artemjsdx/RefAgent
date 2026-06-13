@@ -235,11 +235,10 @@ def _model_method_keyboard(chat_id: int) -> InlineKeyboardMarkup:
 
 def _bai_method_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🆓 Бесплатные модели",   callback_data=f"{_CB_BAI_FREE}0")],
-        [InlineKeyboardButton(text="💳 Платные модели",      callback_data=f"{_CB_BAI_PAID}0")],
-        [InlineKeyboardButton(text="⌨️ Ввести вручную",     callback_data=_CB_MODEL_MANUAL)],
+        [InlineKeyboardButton(text="🆓 Free plan",                callback_data=f"{_CB_BAI_FREE}0")],
+        [InlineKeyboardButton(text="💳 Pro plan",                 callback_data=f"{_CB_BAI_PAID}0")],
         [InlineKeyboardButton(text="🔄 Сбросить (по умолчанию)", callback_data=_CB_MODEL_RESET)],
-        [InlineKeyboardButton(text="◀️ Назад",              callback_data=f"chat:open:{chat_id}")],
+        [InlineKeyboardButton(text="◀️ Назад",                   callback_data=f"chat:open:{chat_id}")],
     ])
 
 
@@ -448,30 +447,33 @@ async def cb_bai_page(query: CallbackQuery, state: FSMContext) -> None:
     rows = []
     for m in page_models:
         marker    = "✅ " if m.id == active_model else ""
-        price_str = "free" if m.is_free else "paid"
+        price_str = "Free plan" if m.is_free else "Pro plan"
         name      = m.name[:26] if len(m.name) > 26 else m.name
         rows.append([InlineKeyboardButton(
             text          = f"{marker}{name} [{price_str}]",
             callback_data = f"{_CB_BAI_SELECT}{m.id}",
         )])
 
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="◀", callback_data=f"cedit:bai:{tier}:{page - 1}"))
-    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=_CB_BAI_NOOP))
-    if end < total:
-        nav.append(InlineKeyboardButton(text="▶", callback_data=f"cedit:bai:{tier}:{page + 1}"))
-    if nav:
+    # Навигация — показываем только если страниц больше одной
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀", callback_data=f"cedit:bai:{tier}:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=_CB_BAI_NOOP))
+        if end < total:
+            nav.append(InlineKeyboardButton(text="▶", callback_data=f"cedit:bai:{tier}:{page + 1}"))
         rows.append(nav)
 
-    tier_label = "Бесплатные" if tier == "free" else "Платные"
-    rows.append([InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=_CB_MODEL_MANUAL)])
-    rows.append([InlineKeyboardButton(text="🔄 Сбросить",        callback_data=_CB_MODEL_RESET)])
-    rows.append([InlineKeyboardButton(text="◀️ Назад",           callback_data=f"chat:open:{chat_id}")])
+    tier_label = "Free plan" if tier == "free" else "Pro plan"
+    rows.append([InlineKeyboardButton(text="◀️ Назад к выбору тарифа", callback_data=f"cedit:bai:tierback:{chat_id}")])
+    rows.append([InlineKeyboardButton(text="🔄 Сбросить",               callback_data=_CB_MODEL_RESET)])
+    rows.append([InlineKeyboardButton(text="◀️ Выйти",                  callback_data=f"chat:open:{chat_id}")])
 
+    header = f"🧠 <b>Модели b.ai — {tier_label}</b>\nВсего: {total}"
+    if total_pages > 1:
+        header += f" | Страница {page + 1}/{total_pages}"
     await query.message.edit_text(
-        f"🧠 <b>Модели b.ai — {tier_label}</b>\n"
-        f"Страница {page + 1} из {total_pages} | Всего: {total}",
+        header,
         parse_mode   = "HTML",
         reply_markup = InlineKeyboardMarkup(inline_keyboard=rows),
     )
@@ -496,6 +498,21 @@ async def cb_bai_select(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(ChatEditStates.editing_model, F.data == _CB_BAI_NOOP)
 async def cb_bai_noop(query: CallbackQuery) -> None:
+    await query.answer()
+
+
+@router.callback_query(
+    ChatEditStates.editing_model,
+    F.data.startswith("cedit:bai:tierback:"),
+)
+async def cb_bai_tierback(query: CallbackQuery, state: FSMContext) -> None:
+    chat_id = int(query.data.split(":")[-1])
+    await query.message.edit_text(
+        "🧠 <b>Изменить модель b.ai</b>\n\n"
+        "Free plan: <code>kimi-k2.5</code>, <code>glm-5</code>, <code>glm-5.1</code>",
+        parse_mode   = "HTML",
+        reply_markup = _bai_method_keyboard(chat_id),
+    )
     await query.answer()
 
 
