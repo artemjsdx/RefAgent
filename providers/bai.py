@@ -19,7 +19,7 @@ BAI_BASE_URL    = "https://api.b.ai/v1"
 BAI_CHAT_PATH   = "/chat/completions"
 BAI_MODELS_PATH = "/models"
 
-BAI_FREE_MODELS = {"kimi-k2.5", "glm-5", "glm-5.1", "minimax-m2.5"}
+BAI_FREE_MODELS = {"kimi-k2.5", "glm-5", "glm-5.1"}
 BAI_MODELS_CACHE_TTL = 3600
 
 USE_TEXT_TOOLS = True

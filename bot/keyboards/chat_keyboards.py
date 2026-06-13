@@ -34,7 +34,7 @@ def provider_picker_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔀 OpenRouter",   callback_data=CB_PROV_OR)],
         [InlineKeyboardButton(text="⭐ FavoriteAPI",  callback_data=CB_PROV_FA)],
-        [InlineKeyboardButton(text="💡 b.ai (бесплатно 500K)", callback_data=CB_PROV_BAI)],
+        [InlineKeyboardButton(text="💡 b.ai",                  callback_data=CB_PROV_BAI)],
         [InlineKeyboardButton(text="❌ Отмена",       callback_data="menu:back_main")],
     ])
 

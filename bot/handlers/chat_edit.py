@@ -51,11 +51,16 @@ _CB_FIELD_MODEL  = "cedit:field:model"
 _CB_CANCEL       = "cedit:cancel"
 _CB_MODEL_BROWSE = "cedit:mbrowse"        # открыть браузер моделей
 _CB_MODEL_MANUAL = "cedit:mmanual"        # ручной ввод модели
-_CB_MB_FREE      = "cedit:mb:free:"       # + page
-_CB_MB_PAID      = "cedit:mb:paid:"       # + page
-_CB_MB_SELECT    = "cedit:mb:select:"     # + model_id
+_CB_MB_FREE      = "cedit:mb:free:"       # + page  (OpenRouter)
+_CB_MB_PAID      = "cedit:mb:paid:"       # + page  (OpenRouter)
+_CB_MB_SELECT    = "cedit:mb:select:"     # + model_id (OpenRouter)
 _CB_MB_NOOP      = "cedit:mb:noop"
 _CB_MODEL_RESET  = "cedit:model:reset"    # сбросить на умолчание провайдера
+# b.ai browser
+_CB_BAI_FREE     = "cedit:bai:free:"      # + page
+_CB_BAI_PAID     = "cedit:bai:paid:"      # + page
+_CB_BAI_SELECT   = "cedit:bai:select:"    # + model_id
+_CB_BAI_NOOP     = "cedit:bai:noop"
 
 
 # ════════════════════════════════════════════════════
@@ -188,9 +193,9 @@ async def cb_edit_model(query: CallbackQuery, state: FSMContext) -> None:
     chat_id  = data["edit_chat_id"]
     provider = data.get("edit_provider", "openrouter")
 
+    await state.set_state(ChatEditStates.editing_model)
+
     if provider == "openrouter":
-        # Для OpenRouter предлагаем браузер или ручной ввод
-        await state.set_state(ChatEditStates.editing_model)
         await query.message.edit_text(
             "🧠 <b>Изменить модель</b>\n\n"
             "Для OpenRouter можно выбрать из списка (300+ моделей) "
@@ -198,15 +203,20 @@ async def cb_edit_model(query: CallbackQuery, state: FSMContext) -> None:
             parse_mode   = "HTML",
             reply_markup = _model_method_keyboard(chat_id),
         )
-    else:
-        # Для FA / b.ai — только ручной ввод
-        await state.set_state(ChatEditStates.editing_model)
-        hint = "kimi-k2.5" if provider == "bai" else "gpt-4o-mini"
+    elif provider == "bai":
         await query.message.edit_text(
-            f"🧠 <b>Новая модель</b>\n\n"
-            f"Введи ID модели.\n"
-            f"<i>Например: <code>{hint}</code></i>\n\n"
-            f"Или нажми <b>Сбросить</b> чтобы использовать модель по умолчанию.",
+            "🧠 <b>Изменить модель b.ai</b>\n\n"
+            "Бесплатный план: <code>kimi-k2.5</code>, <code>glm-5</code>, <code>glm-5.1</code>",
+            parse_mode   = "HTML",
+            reply_markup = _bai_method_keyboard(chat_id),
+        )
+    else:
+        # FavoriteAPI — только ручной ввод
+        await query.message.edit_text(
+            "🧠 <b>Новая модель</b>\n\n"
+            "Введи ID модели.\n"
+            "<i>Например: <code>gpt-4o-mini</code></i>\n\n"
+            "Или нажми <b>Сбросить</b> чтобы использовать модель по умолчанию.",
             parse_mode   = "HTML",
             reply_markup = _model_input_keyboard(chat_id, show_reset=True),
         )
@@ -220,6 +230,16 @@ def _model_method_keyboard(chat_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=_CB_MODEL_MANUAL)],
         [InlineKeyboardButton(text="🔄 Сбросить (по умолчанию)", callback_data=_CB_MODEL_RESET)],
         [InlineKeyboardButton(text="◀️ Назад",       callback_data=f"chat:open:{chat_id}")],
+    ])
+
+
+def _bai_method_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🆓 Бесплатные модели",   callback_data=f"{_CB_BAI_FREE}0")],
+        [InlineKeyboardButton(text="💳 Платные модели",      callback_data=f"{_CB_BAI_PAID}0")],
+        [InlineKeyboardButton(text="⌨️ Ввести вручную",     callback_data=_CB_MODEL_MANUAL)],
+        [InlineKeyboardButton(text="🔄 Сбросить (по умолчанию)", callback_data=_CB_MODEL_RESET)],
+        [InlineKeyboardButton(text="◀️ Назад",              callback_data=f"chat:open:{chat_id}")],
     ])
 
 
@@ -389,6 +409,97 @@ async def cb_mb_noop(query: CallbackQuery) -> None:
 
 
 # ════════════════════════════════════════════════════
+# БРАУЗЕР МОДЕЛЕЙ b.ai (в контексте редактирования)
+# prefix cedit:bai:
+# ════════════════════════════════════════════════════
+
+@router.callback_query(
+    ChatEditStates.editing_model,
+    F.data.func(lambda d: d.startswith("cedit:bai:free:") or d.startswith("cedit:bai:paid:")),
+)
+async def cb_bai_page(query: CallbackQuery, state: FSMContext) -> None:
+    data     = await state.get_data()
+    chat_id  = data["edit_chat_id"]
+
+    d = query.data
+    if d.startswith(_CB_BAI_FREE):
+        tier = "free"
+        page = int(d[len(_CB_BAI_FREE):])
+    else:
+        tier = "paid"
+        page = int(d[len(_CB_BAI_PAID):])
+
+    models = await _fetch_bai_models(chat_id)
+    if not models:
+        await query.answer("Не удалось загрузить список моделей", show_alert=True)
+        return
+
+    from config.constants import MODELS_PER_PAGE
+    filtered    = [m for m in models if (m.is_free if tier == "free" else not m.is_free)]
+    total       = len(filtered)
+    total_pages = max(1, (total + MODELS_PER_PAGE - 1) // MODELS_PER_PAGE)
+    start       = page * MODELS_PER_PAGE
+    end         = min(start + MODELS_PER_PAGE, total)
+    page_models = filtered[start:end]
+
+    chat         = await get_chat(chat_id)
+    active_model = chat.model if chat else None
+
+    rows = []
+    for m in page_models:
+        marker    = "✅ " if m.id == active_model else ""
+        price_str = "free" if m.is_free else "paid"
+        name      = m.name[:26] if len(m.name) > 26 else m.name
+        rows.append([InlineKeyboardButton(
+            text          = f"{marker}{name} [{price_str}]",
+            callback_data = f"{_CB_BAI_SELECT}{m.id}",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀", callback_data=f"cedit:bai:{tier}:{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=_CB_BAI_NOOP))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="▶", callback_data=f"cedit:bai:{tier}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+
+    tier_label = "Бесплатные" if tier == "free" else "Платные"
+    rows.append([InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=_CB_MODEL_MANUAL)])
+    rows.append([InlineKeyboardButton(text="🔄 Сбросить",        callback_data=_CB_MODEL_RESET)])
+    rows.append([InlineKeyboardButton(text="◀️ Назад",           callback_data=f"chat:open:{chat_id}")])
+
+    await query.message.edit_text(
+        f"🧠 <b>Модели b.ai — {tier_label}</b>\n"
+        f"Страница {page + 1} из {total_pages} | Всего: {total}",
+        parse_mode   = "HTML",
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await query.answer()
+
+
+@router.callback_query(ChatEditStates.editing_model, F.data.startswith(_CB_BAI_SELECT))
+async def cb_bai_select(query: CallbackQuery, state: FSMContext) -> None:
+    model_id = query.data[len(_CB_BAI_SELECT):]
+    data     = await state.get_data()
+    chat_id  = data["edit_chat_id"]
+
+    await update_chat_fields(chat_id, model=model_id)
+    await state.set_state(ChatEditStates.choosing_field)
+    await query.message.edit_text(
+        f"✅ Модель выбрана: <code>{model_id}</code>\n\nЧто ещё хочешь изменить?",
+        parse_mode   = "HTML",
+        reply_markup = _field_picker_keyboard(chat_id),
+    )
+    await query.answer("Сохранено")
+
+
+@router.callback_query(ChatEditStates.editing_model, F.data == _CB_BAI_NOOP)
+async def cb_bai_noop(query: CallbackQuery) -> None:
+    await query.answer()
+
+
+# ════════════════════════════════════════════════════
 # ОТМЕНА
 # ════════════════════════════════════════════════════
 
@@ -431,6 +542,19 @@ async def _fetch_or_models(chat_id: int):
         return await p.get_models()
     except Exception as e:
         log.warning(f"[ChatEdit] Не удалось загрузить модели OR: {e}")
+        return []
+
+
+async def _fetch_bai_models(chat_id: int):
+    """Получить список моделей b.ai для браузера, используя api_key из чата."""
+    try:
+        from providers.bai import BaiProvider
+        chat = await get_chat(chat_id)
+        api_key = chat.api_key if chat else ""
+        p = BaiProvider(api_key=api_key)
+        return await p.get_models()
+    except Exception as e:
+        log.warning(f"[ChatEdit] Не удалось загрузить модели b.ai: {e}")
         return []
 
 

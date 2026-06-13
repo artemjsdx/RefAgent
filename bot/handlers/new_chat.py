@@ -41,6 +41,13 @@ _NCM_SELECT = "ncm:select:"   # + model_id
 _NCM_MANUAL = "ncm:manual"    # переключиться на ручной ввод
 _NCM_NOOP   = "ncm:noop"      # индикатор страницы (игнорировать)
 
+# b.ai model browser (New Chat b.ai Model)
+_BCM_FREE   = "bcm:free:"
+_BCM_PAID   = "bcm:paid:"
+_BCM_SELECT = "bcm:select:"
+_BCM_MANUAL = "bcm:manual"
+_BCM_NOOP   = "bcm:noop"
+
 log    = logging.getLogger(__name__)
 router = Router()
 
@@ -195,13 +202,13 @@ async def _ask_model(message: Message, state: FSMContext, provider: str) -> None
     """Показать запрос на ввод модели. OpenRouter — браузер + ручной ввод."""
     await state.set_state(NewChatStates.waiting_model)
 
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
     if provider == "openrouter":
-        # OpenRouter: предлагаем браузер моделей или ручной ввод
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Бесплатные модели",     callback_data=f"{_NCM_FREE}0")],
-            [InlineKeyboardButton(text="💳 Платные модели",        callback_data=f"{_NCM_PAID}0")],
-            [InlineKeyboardButton(text="⌨️ Ввести ID вручную",    callback_data=_NCM_MANUAL)],
+            [InlineKeyboardButton(text="📋 Бесплатные модели",            callback_data=f"{_NCM_FREE}0")],
+            [InlineKeyboardButton(text="💳 Платные модели",               callback_data=f"{_NCM_PAID}0")],
+            [InlineKeyboardButton(text="⌨️ Ввести ID вручную",           callback_data=_NCM_MANUAL)],
             [InlineKeyboardButton(text="⏭ Пропустить (deepseek-r1:free)", callback_data=CB_SKIP_MODEL)],
         ])
         await message.answer(
@@ -211,17 +218,26 @@ async def _ask_model(message: Message, state: FSMContext, provider: str) -> None
             parse_mode   = "HTML",
             reply_markup = kb,
         )
+    elif provider == "bai":
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🆓 Бесплатные модели",   callback_data=f"{_BCM_FREE}0")],
+            [InlineKeyboardButton(text="💳 Платные модели",      callback_data=f"{_BCM_PAID}0")],
+            [InlineKeyboardButton(text="⌨️ Ввести ID вручную",  callback_data=_BCM_MANUAL)],
+            [InlineKeyboardButton(text="⏭ Пропустить (kimi-k2.5)", callback_data=CB_SKIP_MODEL)],
+        ])
+        await message.answer(
+            "🧠 <b>Выбери модель b.ai</b>\n\n"
+            "Бесплатный план: <code>kimi-k2.5</code>, <code>glm-5</code>, <code>glm-5.1</code>\n"
+            "По умолчанию: <code>kimi-k2.5</code>",
+            parse_mode   = "HTML",
+            reply_markup = kb,
+        )
     else:
-        # FA / b.ai — только ручной ввод
-        model_hints = {
-            "favoriteapi": "gpt-4o-mini",
-            "bai":         "kimi-k2.5",
-        }
-        hint = model_hints.get(provider, "gpt-4o-mini")
+        # FavoriteAPI — только ручной ввод
         await message.answer(
             "🧠 Выбери модель.\n\n"
-            f"Введи ID модели или нажми <b>Пропустить</b> (будет использована модель по умолчанию).\n"
-            f"<i>Например: <code>{hint}</code></i>",
+            "Введи ID модели или нажми <b>Пропустить</b> (будет использована модель по умолчанию).\n"
+            "<i>Например: <code>gpt-4o-mini</code></i>",
             parse_mode   = "HTML",
             reply_markup = skip_model_keyboard(),
         )
@@ -345,6 +361,112 @@ async def _ncm_fetch_models(api_key: str):
         return await p.get_models()
     except Exception as e:
         log.warning(f"[NewChat] Не удалось загрузить модели OR: {e}")
+        return []
+
+
+# ════════════════════════════════════════════════════
+# БРАУЗЕР МОДЕЛЕЙ b.ai (в контексте создания чата)
+# prefix bcm: — B.ai Chat Model
+# ════════════════════════════════════════════════════
+
+@router.callback_query(
+    NewChatStates.waiting_model,
+    F.data.func(lambda d: d.startswith("bcm:free:") or d.startswith("bcm:paid:")),
+)
+async def cb_bcm_page(query: CallbackQuery, state: FSMContext) -> None:
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    d = query.data
+    if d.startswith(_BCM_FREE):
+        tier = "free"
+        page = int(d[len(_BCM_FREE):])
+    else:
+        tier = "paid"
+        page = int(d[len(_BCM_PAID):])
+
+    data    = await state.get_data()
+    api_key = data.get("chat_api_key", "")
+    models  = await _bcm_fetch_models(api_key)
+
+    if not models:
+        await query.answer("Не удалось загрузить модели. Введи ID вручную.", show_alert=True)
+        return
+
+    filtered    = [m for m in models if (m.is_free if tier == "free" else not m.is_free)]
+    total       = len(filtered)
+    total_pages = max(1, (total + MODELS_PER_PAGE - 1) // MODELS_PER_PAGE)
+    start       = page * MODELS_PER_PAGE
+    end         = min(start + MODELS_PER_PAGE, total)
+    page_models = filtered[start:end]
+
+    rows = []
+    for m in page_models:
+        price_str = "free" if m.is_free else "paid"
+        name = m.name[:28] if len(m.name) > 28 else m.name
+        rows.append([InlineKeyboardButton(
+            text          = f"{name} [{price_str}]",
+            callback_data = f"{_BCM_SELECT}{m.id}",
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀", callback_data=f"bcm:{tier}:{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data=_BCM_NOOP))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="▶", callback_data=f"bcm:{tier}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+
+    tier_label = "Бесплатные" if tier == "free" else "Платные"
+    rows.append([InlineKeyboardButton(text="⌨️ Ввести вручную",      callback_data=_BCM_MANUAL)])
+    rows.append([InlineKeyboardButton(text="⏭ Пропустить (kimi-k2.5)", callback_data=CB_SKIP_MODEL)])
+
+    await query.message.edit_text(
+        f"🧠 <b>Модели b.ai — {tier_label}</b>\n"
+        f"Страница {page + 1} из {total_pages} | Всего: {total}",
+        parse_mode   = "HTML",
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await query.answer()
+
+
+@router.callback_query(NewChatStates.waiting_model, F.data.startswith(_BCM_SELECT))
+async def cb_bcm_select(query: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    model_id = query.data[len(_BCM_SELECT):]
+    await _finish_chat_creation(query.message, state, bot, model=model_id, from_query=query)
+
+
+@router.callback_query(NewChatStates.waiting_model, F.data == _BCM_MANUAL)
+async def cb_bcm_manual(query: CallbackQuery, state: FSMContext) -> None:
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ Пропустить (kimi-k2.5)", callback_data=CB_SKIP_MODEL)],
+    ])
+    await query.message.edit_text(
+        "⌨️ <b>Ввод ID модели вручную</b>\n\n"
+        "Введи ID модели:\n"
+        "<i>Например: <code>kimi-k2.5</code>, <code>glm-5</code></i>\n\n"
+        "<a href='https://b.ai'>Доступные модели: b.ai</a>",
+        parse_mode               = "HTML",
+        reply_markup             = kb,
+        disable_web_page_preview = True,
+    )
+    await query.answer()
+
+
+@router.callback_query(NewChatStates.waiting_model, F.data == _BCM_NOOP)
+async def cb_bcm_noop(query: CallbackQuery) -> None:
+    await query.answer()
+
+
+async def _bcm_fetch_models(api_key: str):
+    """Получить модели b.ai используя api_key из FSM state."""
+    try:
+        from providers.bai import BaiProvider
+        p = BaiProvider(api_key=api_key)
+        return await p.get_models()
+    except Exception as e:
+        log.warning(f"[NewChat] Не удалось загрузить модели b.ai: {e}")
         return []
 
 
