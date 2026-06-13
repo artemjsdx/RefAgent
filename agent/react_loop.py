@@ -31,10 +31,22 @@ from agent.context_manager import context_manager
 from agent.state import agent_state
 from agent.status_event import (
     StatusEvent, StatusCallback,
-    KIND_THINKING, KIND_THOUGHT, KIND_TOOL_CALL, KIND_TOOL_RESULT,
+    KIND_THINKING, KIND_THOUGHT, KIND_STATUS, KIND_TOOL_CALL, KIND_TOOL_RESULT,
     KIND_STEP, KIND_WAIT, KIND_RETRY, KIND_WARN, KIND_ERROR,
     KIND_STOP, KIND_DONE, KIND_SEPARATOR, KIND_CONTEXT_RESET,
 )
+
+# ── [S: ...] status-token helpers ─────────────────────────────────────────
+_STATUS_TOKEN_RE = re.compile(r'\[S:\s*([^\]]{1,80})\]')
+
+def _extract_s_tokens(text: str) -> list[str]:
+    """Return all [S: text] values found in text."""
+    return [m.group(1).strip() for m in _STATUS_TOKEN_RE.finditer(text)]
+
+def _strip_s_tokens(text: str) -> str:
+    """Remove all [S: ...] tokens from text."""
+    return _STATUS_TOKEN_RE.sub('', text).strip()
+
 from config.constants import (
     TIMING_BETWEEN_REFERRALS, TIMING_BETWEEN_ACCOUNTS,
     FAVORITEAPI_CTX_WARN_KB,
@@ -381,7 +393,12 @@ class ReactLoop:
             if response.has_tool_calls:
                 # If model wrote commentary alongside tool call — show it
                 if response.text and response.text.strip():
-                    await self._emit(KIND_THOUGHT, text=response.text.strip()[:400])
+                    _raw = response.text.strip()
+                    for _s in _extract_s_tokens(_raw):
+                        await self._emit(KIND_STATUS, text=_s[:60])
+                    _clean = _strip_s_tokens(_raw)[:400]
+                    if _clean:
+                        await self._emit(KIND_THOUGHT, text=_clean)
 
                 for tc in response.tool_calls:
                     tool_calls_to_execute.append({
@@ -413,7 +430,11 @@ class ReactLoop:
                     clean_text = strip_tool_calls(response.text)
                     self._history.append(Message(role="assistant", content=response.text))
                     if clean_text:
-                        await self._emit(KIND_THOUGHT, text=clean_text[:300])
+                        for _s in _extract_s_tokens(clean_text):
+                            await self._emit(KIND_STATUS, text=_s[:60])
+                        _clean_no_s = _strip_s_tokens(clean_text)[:300]
+                        if _clean_no_s:
+                            await self._emit(KIND_THOUGHT, text=_clean_no_s)
                 else:
                     # Always strip <tool_call> tags before storing/displaying text
                     last_text = strip_tool_calls(response.text).strip()
