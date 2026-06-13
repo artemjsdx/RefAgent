@@ -208,7 +208,8 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
                 pass
             anim["msg_id"] = None
         if _animator:
-            anim["msg_id"] = await _animator.start(tg_chat_id, action)
+            # Всегда передаём running_keyboard чтобы кнопки не исчезали
+            anim["msg_id"] = await _animator.start(tg_chat_id, action, reply_markup=running_keyboard())
 
     async def _dialog_log_cb(event: "StatusEvent") -> None:
         if _flags["stopped"]:
@@ -228,7 +229,7 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
                 await _animator.finalize(tg_chat_id, anim["msg_id"], f"💭 {md_to_html(raw[:500])}")
                 anim["msg_id"] = None
             if _animator:
-                anim["msg_id"] = await _animator.start(tg_chat_id, "thinking")
+                anim["msg_id"] = await _animator.start(tg_chat_id, "thinking", reply_markup=running_keyboard())
 
     # "done" | "plan" | "cancelled" | "error"
     _outcome: dict[str, str] = {"v": "done"}
@@ -502,7 +503,7 @@ async def _start_agent_task(
                 pass
             run_anim["msg_id"] = None
         if _animator:
-            run_anim["msg_id"] = await _animator.start(chat_id, action)
+            run_anim["msg_id"] = await _animator.start(chat_id, action, reply_markup=running_keyboard())
 
     async def _with_anim(coro, terminal: bool = False) -> None:
         """
@@ -518,7 +519,7 @@ async def _start_agent_task(
             run_anim["msg_id"] = None
         await coro
         if not terminal and _animator:
-            run_anim["msg_id"] = await _animator.start(chat_id, "thinking")
+            run_anim["msg_id"] = await _animator.start(chat_id, "thinking", reply_markup=running_keyboard())
 
     async def log_cb(event: StatusEvent) -> None:
         k = event.kind
