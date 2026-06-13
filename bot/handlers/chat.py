@@ -31,7 +31,7 @@ from bot.keyboards.main_menu import (
 from bot.keyboards.reply_keyboard import (
     idle_keyboard, running_keyboard, plan_keyboard,
 )
-from bot.ui.animator import Animator
+from bot.ui.animator import Animator, CompoundBlock, make_action_line, TOOL_STATUS
 from bot.ui.status_blocks import send_log, send_error
 from bot.file_buffer import pop_files, has_files
 from agent.react_loop import ReactLoop
@@ -164,72 +164,35 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
     # Сразу переключаемся в running — показываем кнопку ⛔ Остановить
     await state.set_state(ChatStates.running)
 
-    anim    = {"msg_id": None}
-    _flags  = {"stopped": False}   # флаг: задача остановлена, не запускать новые анимации
-    if _animator:
-        # keyboard прикрепляем к первому анимационному сообщению
-        anim["msg_id"] = await _animator.start(tg_chat_id, "thinking", reply_markup=running_keyboard())
+    _flags = {"stopped": False}   # флаг: задача остановлена, не запускать новые анимации
+    block  = CompoundBlock(bot)
+    await block.start(tg_chat_id, "thinking", reply_markup=running_keyboard())
 
     from agent.status_event import StatusEvent, KIND_THOUGHT as _KIND_THOUGHT, KIND_TOOL_CALL as _KIND_TOOL_CALL
-
-    _DIALOG_TOOL_ANIM: dict[str, str | None] = {
-        "connect_account":        "connecting",
-        "disconnect_account":     "working",
-        "join_channel":           "joining",
-        "conductor_join_group":   "joining",
-        "start_bot":              "working",
-        "send_message":           "sending",
-        "get_messages":           "reading",
-        "wait_bot_response":      "reading",
-        "get_inline_button_urls": "reading",
-        "click_button":           "working",
-        "search_library":         "searching",
-        "search_skills":          "searching",
-        "use_skill":              "searching",
-        "write_library":          "saving",
-        "load_sessions":          "scanning",
-        "list_accounts":          "scanning",
-        "conductor_setup":        "connecting",
-        "conductor_cleanup":      "working",
-        "execute_command":        "working",
-        "run_temp_script":        "working",
-        "propose_plan":           "planning",
-        "sleep_seconds":          None,
-    }
-
-    async def _dialog_switch_anim(action: str) -> None:
-        if _flags["stopped"]:
-            return
-        if _animator and anim["msg_id"]:
-            await _animator.stop_only(anim["msg_id"])
-            try:
-                await bot.delete_message(tg_chat_id, anim["msg_id"])
-            except Exception:
-                pass
-            anim["msg_id"] = None
-        if _animator:
-            # Всегда передаём running_keyboard чтобы кнопки не исчезали
-            anim["msg_id"] = await _animator.start(tg_chat_id, action, reply_markup=running_keyboard())
 
     async def _dialog_log_cb(event: "StatusEvent") -> None:
         if _flags["stopped"]:
             return
         k = event.kind
         if k == _KIND_TOOL_CALL:
-            tool      = event.data.get("tool", "")
-            anim_type = _DIALOG_TOOL_ANIM.get(tool, "working")
-            if anim_type is not None:
-                await _dialog_switch_anim(anim_type)
+            tool         = event.data.get("tool", "")
+            args_preview = event.data.get("args_preview", "")
+            line         = make_action_line(tool, args_preview)
+            status       = TOOL_STATUS.get(tool, "working")   # default "working" for unknown tools
+            if line is not None:
+                await block.add_log(line, new_status=status)
+            elif status is not None:
+                await block.switch_status(status)
         elif k == _KIND_THOUGHT:
             from bot.utils.md_to_html import md_to_html
             raw = event.data.get("text", "").strip()
             if not raw:
                 return
-            if _animator and anim["msg_id"]:
-                await _animator.finalize(tg_chat_id, anim["msg_id"], f"💭 {md_to_html(raw[:500])}")
-                anim["msg_id"] = None
-            if _animator:
-                anim["msg_id"] = await _animator.start(tg_chat_id, "thinking", reply_markup=running_keyboard())
+            # Finalise current log block, send thought, start fresh block
+            await block.finalize_log()
+            await bot.send_message(tg_chat_id, f"💭 {md_to_html(raw[:500])}", parse_mode="HTML")
+            if not _flags["stopped"]:
+                await block.start(tg_chat_id, "thinking", reply_markup=running_keyboard())
 
     # "done" | "plan" | "cancelled" | "error"
     _outcome: dict[str, str] = {"v": "done"}
@@ -251,13 +214,7 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
                 plan_data = json.loads(result[len("__plan_proposed__"):] or "{}")
                 plan_text = plan_data.get("plan_text", "")
 
-                if _animator and anim["msg_id"]:
-                    await _animator.stop_only(anim["msg_id"])
-                    try:
-                        await bot.delete_message(tg_chat_id, anim["msg_id"])
-                    except Exception:
-                        pass
-                    anim["msg_id"] = None
+                await block.stop_only()
 
                 await state.set_state(ChatStates.awaiting_run)
                 await bot.send_message(
@@ -274,33 +231,19 @@ async def handle_dialog_message(message: Message, state: FSMContext, bot: Bot) -
             else:
                 from bot.utils.md_to_html import md_to_html
                 result_html = md_to_html(result)
-                if _animator and anim["msg_id"]:
-                    await _animator.finalize(tg_chat_id, anim["msg_id"], result_html, reply_markup=idle_keyboard())
-                    anim["msg_id"] = None
-                else:
-                    await bot.send_message(tg_chat_id, result_html, parse_mode="HTML", reply_markup=idle_keyboard())
+                await block.finalize(result_html, reply_markup=idle_keyboard())
                 from tools.history_db import save_pair
                 await save_pair(chat.id, user_text, result)
 
         except asyncio.CancelledError:
             _outcome["v"] = "cancelled"
-            _flags["stopped"] = True   # блокируем все новые анимации от зависших коллбеков
-            if _animator and anim["msg_id"]:
-                await _animator.stop_only(anim["msg_id"])
-                try:
-                    await bot.delete_message(tg_chat_id, anim["msg_id"])
-                except Exception:
-                    pass
-                anim["msg_id"] = None
+            _flags["stopped"] = True   # блокируем все новые log-коллбеки
+            await block.stop_only()
 
         except Exception as e:
             _outcome["v"] = "error"
             log.exception(f"[Chat] Ошибка диалога: {e}")
-            if _animator and anim["msg_id"]:
-                await _animator.finalize(tg_chat_id, anim["msg_id"], f"❌ Ошибка: {e}", reply_markup=idle_keyboard())
-                anim["msg_id"] = None
-            else:
-                await bot.send_message(tg_chat_id, f"❌ Ошибка: {e}", reply_markup=idle_keyboard())
+            await block.finalize(f"❌ Ошибка: {e}", reply_markup=idle_keyboard())
 
         finally:
             agent_state.set_active(False)
