@@ -6,7 +6,7 @@ reply_handler.py — Перехват нажатий reply-кнопок.
   чтобы тексты reply-кнопок не попадали в хендлер свободного диалога.
 
 Маршрутизация:
-  BTN_WRITE_TASK  → переход в dialog (если агент не работает)
+  BTN_EXIT_CHAT   → выйти из чата в главное меню
   BTN_MY_CHATS    → показать список чатов
   BTN_STOP        → остановить агент
   BTN_STOP_WRITE  → остановить + перейти в dialog
@@ -25,7 +25,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from bot.keyboards.reply_keyboard import (
-    BTN_WRITE_TASK, BTN_MY_CHATS, BTN_CLEAR_HISTORY,
+    BTN_EXIT_CHAT, BTN_MY_CHATS, BTN_CLEAR_HISTORY,
     BTN_STOP, BTN_STOP_WRITE,
     BTN_PLAN_RUN, BTN_PLAN_EDIT, BTN_PLAN_CANCEL,
     idle_keyboard, running_keyboard,
@@ -39,10 +39,11 @@ router = Router()
 # IDLE STATE
 # ════════════════════════════════════════════════════
 
-@router.message(F.text == BTN_WRITE_TASK)
-async def reply_write_task(message: Message, state: FSMContext) -> None:
+@router.message(F.text == BTN_EXIT_CHAT)
+async def reply_exit_chat(message: Message, state: FSMContext) -> None:
+    """Кнопка 🚪 Выйти из чата — очистить активный чат и вернуться в главное меню."""
     from agent.state import agent_state
-    from bot.handlers.chat import ChatStates
+    from bot.handlers.start import cmd_start
 
     if agent_state.is_active:
         await message.reply(
@@ -52,27 +53,8 @@ async def reply_write_task(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Проверить — есть ли активный чат
-    data = await state.get_data()
-    if not data.get("active_chat_id"):
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        await message.reply(
-            "💬 <b>Сначала выбери чат</b>\n\n"
-            "Нажми <b>💬 Мои чаты</b> чтобы открыть существующий,\n"
-            "или <b>➕ Новый чат</b> чтобы создать с нуля.",
-            parse_mode   = "HTML",
-            reply_markup = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="➕ Новый чат",  callback_data="chat:new")],
-                [InlineKeyboardButton(text="💬 Мои чаты",   callback_data="chat:list")],
-            ]),
-        )
-        return
-
-    await state.set_state(ChatStates.dialog)
-    await message.reply(
-        "📝 Напиши задачу — реф ссылку, условия зачисления, количество аккаунтов.",
-        reply_markup = idle_keyboard(),
-    )
+    await state.clear()
+    await cmd_start(message)
 
 
 @router.message(F.text == BTN_CLEAR_HISTORY)
